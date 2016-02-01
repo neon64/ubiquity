@@ -1,0 +1,18 @@
+[package]
+name = "ubiquity"
+version = "0.1.0"
+authors = ["Chris Chamberlain <c.chamberlain@iinet.net.au>"]
+
+[dependencies]
+fnv = "*"
+bincode = "*"
+serde = "*"
+serde_macros = "*"
+byteorder = "0.4"
+log = "*"
+regex = "*"
+term = "*"
+walkdir = "0.1.5"
+
+[dev_dependencies]
+env_logger = "*"
