@@ -26,18 +26,31 @@ impl Archive {
         Ok(Archive { directory: directory })
     }
 
-    pub fn file_for_directory(&self, directory: &Path) -> PathBuf {
+    fn file_for_directory(&self, directory: &Path) -> PathBuf {
         self.directory.join(hash_single(directory).to_string())
     }
 
-    pub fn get_entries_for_directory_or_empty(&self, directory: &Path) -> Result<Vec<ArchiveEntry>, ReadError> {
-        let archive_file = self.file_for_directory(directory);
-        if archive_file.exists() {
-            let mut file = try!(File::open(archive_file.clone()));
+    pub fn for_directory(&self, directory: &Path) -> ArchiveFile {
+        return ArchiveFile { path: self.file_for_directory(directory) }
+    }
+}
+
+pub struct ArchiveFile {
+    path: PathBuf
+}
+
+impl ArchiveFile {
+    pub fn remove_all(&self) -> Result<(), io::Error> {
+        remove_file(self.path.clone())
+    }
+
+    pub fn read(&self) -> Result<Vec<ArchiveEntry>, ReadError> {
+        if self.path.exists() {
+            let mut file = try!(File::open(self.path.clone()));
             match read_entries(&mut file) {
                 Ok(i) => Ok(i),
-                Err(ReadError::InvalidVersion(version)) => {
-                    info!("Archive file {:?} using outdated version ({})", archive_file, version);
+                Err(ReadError::InvalidArchiveVersion(version)) => {
+                    info!("Archive file {:?} using outdated version ({})", self.path, version);
                     Ok(Vec::new())
                 },
                 Err(e) => Err(From::from(e))
@@ -47,20 +60,23 @@ impl Archive {
         }
     }
 
-    pub fn write_entries_for_directory(&self, directory: &Path, mut entries: Vec<ArchiveEntry>) -> Result<(), WriteError> {
+    pub fn write(&self, mut entries: Vec<ArchiveEntry>) -> Result<(), WriteError> {
         remove_deleted_entries(&mut entries);
 
-        let archive_file = self.file_for_directory(directory);
-
         if entries.is_empty() {
-            debug!("Removing archive file {:?} (all entries gone)", archive_file);
-            try!(remove_file(archive_file));
-            Ok(())
+            if self.path.exists() {
+                debug!("Removing archive file {:?} (all entries gone)", self.path);
+                try!(remove_file(self.path.clone()));
+            } else {
+                debug!("Archive file {:?} doesn't exist (all entries gone)", self.path);
+            }
         } else {
-            debug!("Writing archive file {:?}", archive_file);
-            let ref mut file = try!(File::create(archive_file));
-            write_entries(file, &entries)
+            debug!("Writing archive file {:?}", self.path);
+            let ref mut file = try!(File::create(self.path.clone()));
+            try!(write_entries(file, &entries));
         }
+
+        Ok(())
     }
 }
 
@@ -83,9 +99,26 @@ fn remove_deleted_entries(entries: &mut Vec<ArchiveEntry>) {
     });
 }
 
+/// reads a set of entries from a binary stream
+fn read_entries<R: io::Read>(read: &mut R) -> Result<Vec<ArchiveEntry>, ReadError> {
+    let version = try!(read.read_u32::<LittleEndian>());
+    if version != ARCHIVE_VERSION {
+        return Err(ReadError::InvalidArchiveVersion(version))
+    }
+    let result = try!(deserialize_from(read, SizeLimit::Infinite));
+    Ok(result)
+}
+
+// writes a set of entries to a binary stream
+fn write_entries<W: io::Write>(out: &mut W, entries: &Vec<ArchiveEntry>) -> Result<(), WriteError> {
+    try!(out.write_u32::<LittleEndian>(ARCHIVE_VERSION));
+    try!(serialize_into(out, entries, SizeLimit::Infinite));
+    Ok(())
+}
+
 #[derive(Debug)]
 pub enum ReadError {
-    InvalidVersion(u32),
+    InvalidArchiveVersion(u32),
     IoError(io::Error),
     ByteOrderError(ByteorderError),
     DeserializeError(DeserializeError)
@@ -132,21 +165,4 @@ impl From<ByteorderError> for WriteError {
     fn from(e: ByteorderError) -> Self {
         WriteError::ByteOrderError(e)
     }
-}
-
-/// reads a set of entries from a binary stream
-fn read_entries<R: io::Read>(read: &mut R) -> Result<Vec<ArchiveEntry>, ReadError> {
-    let version = try!(read.read_u32::<LittleEndian>());
-    if version != ARCHIVE_VERSION {
-        return Err(ReadError::InvalidVersion(version))
-    }
-    let result = try!(deserialize_from(read, SizeLimit::Infinite));
-    Ok(result)
-}
-
-// writes a set of entries to a binary stream
-fn write_entries<W: io::Write>(out: &mut W, entries: &Vec<ArchiveEntry>) -> Result<(), WriteError> {
-    try!(out.write_u32::<LittleEndian>(ARCHIVE_VERSION));
-    try!(serialize_into(out, entries, SizeLimit::Infinite));
-    Ok(())
 }

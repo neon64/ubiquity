@@ -1,4 +1,6 @@
 target
 Cargo.lock
 ubiquity.iml
+tests/root_a
+tests/root_b
 .idea

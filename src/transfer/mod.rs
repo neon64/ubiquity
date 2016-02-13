@@ -100,12 +100,23 @@ fn remove_file(path: &Path, archive_update: &ArchiveUpdateInfo, options: &Confli
 }
 
 fn remove_directory_recursive(path: &Path, archive_update: &ArchiveUpdateInfo, options: &ConflictResolutionOptions) -> Result<(), SyncError> {
-    info!("Removing directory {:?}", path);
     if !(options.before_delete)(path) {
         return Err(SyncError::Cancelled);
     }
 
-    for entry in try!(fs::read_dir(path)) {
+    info!("Removing archive files for directory {:?} (and contents)", path);
+    for entry in WalkDir::new(path) {
+        let entry = try!(entry);
+        if try!(entry.metadata()).is_dir() {
+            let child_path = archive_update.relative_path.join(entry.path().strip_prefix(path).unwrap().as_os_str());
+            let archive = archive_update.archive.for_directory(&child_path);
+            try!(archive.remove_all());
+        }
+    }
+
+    try!(archive_update.archive.for_directory(&archive_update.relative_path).remove_all());
+
+    /*for entry in try!(fs::read_dir(path)) {
         let entry = try!(entry);
 
         let ref child_archive_update = archive_update.for_child(&entry.file_name());
@@ -115,8 +126,10 @@ fn remove_directory_recursive(path: &Path, archive_update: &ArchiveUpdateInfo, o
         } else {
             try!(remove_file(&entry.path(), child_archive_update, options));
         }
-    }
-    try!(fs::remove_dir(path));
+    }*/
+
+    debug!("Removing directory {:?}", path);
+    try!(fs::remove_dir_all(path));
     update_archive(archive_update)
 }
 
@@ -179,7 +192,8 @@ fn run_rsync(source: &Path, dest: &Path) -> io::Result<()> {
 
 fn update_archive(archive_update: &ArchiveUpdateInfo) -> Result<(), SyncError> {
     let directory = archive_update.relative_path.parent().unwrap();
-    let mut entries = try!(archive_update.archive.get_entries_for_directory_or_empty(directory));
+    let archive = archive_update.archive.for_directory(directory);
+    let mut entries = try!(archive.read());
     let path_hash = hash_single(&archive_update.relative_path);
     let mut found = false;
     for entry in &mut entries {
@@ -196,7 +210,7 @@ fn update_archive(archive_update: &ArchiveUpdateInfo) -> Result<(), SyncError> {
         entries.push(ArchiveEntry::new(path_hash, replicas));
     }
 
-    try!(archive_update.archive.write_entries_for_directory(directory, entries));
+    try!(archive.write(entries));
     Ok(())
 }
 

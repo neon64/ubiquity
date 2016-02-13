@@ -10,52 +10,76 @@ use std::path::Path;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::collections::HashMap;
 
 use ubiquity::state::SyncInfo;
-use ubiquity::conflict::{detect, resolve};
-use ubiquity::{transfer, archive};
+use ubiquity::conflict::{detect};
+use ubiquity::archive::Archive;
 
-#[test]
-fn test_basic_sync() {
-    env_logger::init().unwrap();
+fn set_up() -> (Archive, SyncInfo) {
+    let _ = env_logger::init();
 
-    let archive = archive::Archive::new(Path::new("tests/archive").to_path_buf()).unwrap();
+    let archive = Archive::new(Path::new("tests/archive").to_path_buf()).unwrap();
 
     let config = SyncInfo {
         roots: vec![Path::new("tests/root_a").to_path_buf(), Path::new("tests/root_b").to_path_buf()],
-        ignore_regex: vec![Regex::new(r"foo").unwrap()],
-        ignore_path: vec!["baz".to_owned()],
+        ignore_regex: vec![],
+        ignore_path: vec![],
         compare_file_contents: true
     };
 
     clean_directory(Path::new("tests/root_a")).unwrap();
     clean_directory(Path::new("tests/root_b")).unwrap();
 
-    {
-        let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
-        assert!(conflicts.is_empty());
-    }
+    return (archive, config)
+}
 
-    // test ignore
-    {
-        fs::File::create("tests/root_a/foo").unwrap();
-        fs::File::create("tests/root_a/something_contains_foo").unwrap();
-        fs::create_dir("tests/root_a/baz").unwrap();
+#[test]
+fn test_conflicts_are_empty() {
+    let (archive, config) = set_up();
 
-        let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
-        assert!(conflicts.is_empty());
-    }
+    let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
+    assert!(conflicts.is_empty());
+}
 
-    // test basic detection
-    {
-        let mut test_document = fs::File::create("tests/root_b/Test Document").unwrap();
-        write!(test_document, "Hello World").unwrap();
+#[test]
+fn test_files_are_ignored() {
+    let (archive, mut config) = set_up();
+    config.ignore_regex.push(Regex::new(r"foo").unwrap());
+    config.ignore_path.push("baz".to_owned());
 
-        let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(&conflicts[0].path, Path::new("Test Document"));
-    }
+    fs::File::create("tests/root_a/foo").unwrap();
+    fs::File::create("tests/root_a/something_contains_foo").unwrap();
+    fs::create_dir("tests/root_a/baz").unwrap();
+
+    let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
+    assert!(conflicts.is_empty());
+}
+
+#[test]
+fn test_changes_are_detected() {
+    let (archive, config) = set_up();
+
+    let mut test_document = fs::File::create("tests/root_b/Test Document").unwrap();
+    write!(test_document, "Hello World").unwrap();
+
+    let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(&conflicts[0].path, Path::new("Test Document"));
+}
+
+#[test]
+fn test_nested_conflicts_are_removed() {
+    let (archive, config) = set_up();
+
+    fs::create_dir("tests/root_a/baz").unwrap();
+    fs::create_dir("tests/root_a/baz/qux").unwrap();
+    fs::File::create("tests/root_a/baz/qux/cub").unwrap();
+
+    let mut sd = detect::SearchDirectories::new(vec![Path::new("baz").into(), Path::new("baz/qux").into()], false);
+
+    let (conflicts, _) = detect::find_conflicts(&archive, &mut sd, &config, &detect::NoProgress).unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(&conflicts[0].path, Path::new("baz"));
 }
 
 fn clean_directory(p: &Path) -> io::Result<()> {

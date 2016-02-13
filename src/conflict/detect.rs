@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::fs::{read_dir};
 use std::hash::Hasher;
@@ -13,7 +12,7 @@ use conflict::Conflict;
 #[derive(Debug)]
 pub struct SearchDirectories {
     pub directories: Vec<PathBuf>,
-    recurse: bool
+    pub recurse: bool
 }
 
 impl SearchDirectories {
@@ -33,9 +32,9 @@ impl SearchDirectories {
 }
 
 
-/// The mammoth function.
-///
-/// Detects all conflicts between the two replicas
+/// This mammoth function detects all conflicts between the two replicas.
+/// It starts with the list of search directories provided and loops through them looking for conflicts.
+/// If the recurse field of the SearchDirectories is set to true, then subdirectories inside each search directory will be added to the list.
 pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &mut SearchDirectories, config: &SyncInfo, progress_callback: &P) -> Result<(Vec<Conflict>, ConflictDetectionStatistics), SyncError> {
     let mut archive_entries = ArchiveEntries::new();
     let mut current_entries: FnvHashMap<PathBuf, Vec<CurrentEntryPerReplica>> = Default::default();
@@ -58,13 +57,19 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
         }
 
         // get the previous entries (a snapshot of what it was like)
-        archive_entries.load_entries(try!(archive.get_entries_for_directory_or_empty(&directory)));
+        archive_entries.load_entries(try!(archive.for_directory(&directory).read()));
 
         // creates a list of all the different entries in the directory
         info!("Reading dir {:?}", directory);
         progress_callback.reading_directory(&directory);
 
         current_entries.clear();
+
+        // when looking at the contents of this search directory, we must check if the
+        // search directory itself is conflicting. if it is, then we will add it to the list
+        // of paths to check.
+        let mut current_search_directory_might_be_conflicting = false;
+
         for root in &config.roots {
             let absolute_directory = root.join(directory.clone());
 
@@ -74,38 +79,47 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
                 for archive_entry in try!(read_dir(absolute_directory)) {
                     let archive_entry = try!(archive_entry);
                     let relative_path = archive_entry.path();
-                    let relative_path = relative_path.strip_prefix(root).unwrap().to_path_buf();
-
-                    trace!("Found entry {:?}", archive_entry.path());
+                    let relative_path = relative_path.strip_prefix(root).unwrap_or_else(|_| panic!("couldn't strip prefix {:?} from {:?}", root, relative_path)).to_path_buf();
 
                     if is_ignored(config, &relative_path) {
+                        trace!("Ignoring entry {:?}", relative_path);
                         continue;
                     }
 
-                    current_entries.entry(relative_path).or_insert(Vec::new());
+                    trace!("Adding entry {:?}", relative_path);
+
+                    current_entries.entry(relative_path).or_insert_with(|| {
+                        Vec::new()
+                    });
                 }
             } else {
-                info!("{:?} doesn't exist", absolute_directory);
+                current_search_directory_might_be_conflicting = true;
+                info!("{:?} isn't a directory, might be conflicting", absolute_directory);
             }
         }
 
+        if current_search_directory_might_be_conflicting {
+            trace!("Adding entry {:?} (the search directory itself)", directory);
+            current_entries.entry(directory.clone()).or_insert(Vec::new());
+        }
+
         // analyses each item for conflicts
-        info!("Analysing for conflicts");
+        debug!("Analysing items in {:?} for conflicts", directory);
         let current_entries_len = current_entries.len();
-        'for_each_entry: for (i, (path, entry)) in current_entries.iter_mut().enumerate() {
-            debug!("Analysing {:?}", path);
+        'for_each_entry: for (i, (path, current_entry)) in current_entries.iter_mut().enumerate() {
+            trace!("Analysing item {:?}", path);
             progress_callback.analysing_entry(&path, i, current_entries_len);
 
             for root in &config.roots {
                 let absolute_path = root.join(path);
                 let a = ArchiveEntryPerReplica::from(&*absolute_path);
-                entry.push(CurrentEntryPerReplica { path: absolute_path, archive: a });
+                current_entry.push(CurrentEntryPerReplica { path: absolute_path, archive: a });
             }
 
             let mut do_further_analysis = true;
             if let Some(archive_entries) = archive_entries.get_for_path(path) {
                 trace!("Checking archive files");
-                let all_archive_files_valid = all_archive_files_valid(archive_entries, entry);
+                let all_archive_files_valid = all_archive_files_valid(archive_entries, current_entry);
                 if all_archive_files_valid {
                     stats.archive_hits += 1;
                     trace!("Archive files intact, no changes have been made");
@@ -114,34 +128,26 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
             }
 
             if do_further_analysis {
-                trace!("Checking for incompatible ArchiveEntry types");
+                trace!("Checking for incompatible entry types (eg: file vs folder vs empty)");
                 // loop through 'abcdef' like: ab bc cd de ef
-                for entry_window in entry.windows(2) {
+                for entry_window in current_entry.windows(2) {
                     let equal_ty = ArchiveEntryPerReplica::equal_ty(&entry_window[0].archive, &entry_window[1].archive);
                     if !equal_ty {
                         info!("Conflict: Types not equal");
-                        conflicts.push(Conflict {
-                            path: path.clone(),
-                            previous_state: archive_entries.get_for_path(path).cloned(),
-                            current_state: entry.clone()
-                        });
+                        add_conflict(&mut conflicts, path, archive_entries.get_for_path(path).cloned(), current_entry.clone());
                         continue 'for_each_entry;
                     }
                 }
 
                 trace!("Checking for different file sizes");
-                for entry_window in entry.windows(2) {
+                for entry_window in current_entry.windows(2) {
                     // if the sizes are different
                     if entry_window[0].archive.is_file_or_symlink() && entry_window[1].archive.is_file_or_symlink() {
                         let size_0 = try!(entry_window[0].path.metadata()).size();
                         let size_1 = try!(entry_window[1].path.metadata()).size();
                         if size_0 != size_1 {
                             info!("Conflict: File sizes not equal: {} != {}", size_0, size_1);
-                            conflicts.push(Conflict {
-                                path: path.clone(),
-                                previous_state: archive_entries.get_for_path(path).cloned(),
-                                current_state: entry.clone()
-                            });
+                            add_conflict(&mut conflicts, path, archive_entries.get_for_path(path).cloned(), current_entry.clone());
                             continue 'for_each_entry;
                         }
                     }
@@ -150,15 +156,11 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
                 // If they are both files, we will compare the contents
                 if config.compare_file_contents {
                     trace!("Checking file contents");
-                    for entry_window in entry.windows(2) {
+                    for entry_window in current_entry.windows(2) {
                         if entry_window[0].archive.is_file_or_symlink() && entry_window[1].archive.is_file_or_symlink() {
                             if !try!(file_contents_equal_cmd(&entry_window[0].path, &entry_window[1].path)) {
                                 info!("Conflict: File contents not equal");
-                                conflicts.push(Conflict {
-                                    path: path.clone(),
-                                    previous_state: archive_entries.get_for_path(path).cloned(),
-                                    current_state: entry.clone()
-                                });
+                                add_conflict(&mut conflicts, path, archive_entries.get_for_path(path).cloned(), current_entry.clone());
                                 continue 'for_each_entry;
                             }
                         }
@@ -167,13 +169,13 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
 
                 stats.archive_additions += 1;
                 // since we now know that each ArchiveEntry is identical, we can store that information in the archive
-                archive_entries.insert(path, &entry.iter().map(|e| e.archive).collect());
+                archive_entries.insert(path, &current_entry.iter().map(|e| e.archive).collect());
             }
 
             // now we can assume that every replica contains an identical ArchiveEntry
 
             // we will recurse into the directory
-            if let Some(last_replica) = entry.last() {
+            if let Some(last_replica) = current_entry.last() {
                 if search.recurse && last_replica.path.is_dir() {
                     search.directories.push(path.clone());
                 }
@@ -182,22 +184,46 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
 
         if archive_entries.dirty {
             info!("Writing new archive files");
-            try!(archive.write_entries_for_directory(&directory, archive_entries.get_entries_as_vec()));
+            try!(archive.for_directory(&directory).write(archive_entries.get_entries_as_vec()));
         }
     }
     Ok((conflicts, stats))
 }
 
+/// adds a new conflict to the list, using the provided path and previous/current archive information
+fn add_conflict(conflicts: &mut Vec<Conflict>, path: &Path, previous: Option<Vec<ArchiveEntryPerReplica>>, current: Vec<CurrentEntryPerReplica>) {
+    let mut add = true;
+    conflicts.retain(|conflict| {
+        if conflict.path.starts_with(path) {
+            debug!("Removing nested conflict at {:?}", conflict.path);
+            false
+        } else {
+            if path.starts_with(&conflict.path) {
+                debug!("Not adding nested conflict at {:?}", path);
+                add = false;
+            }
+            true
+        }
+    });
+    if add {
+        conflicts.push(Conflict {
+            path: path.to_path_buf(),
+            previous_state: previous,
+            current_state: current
+        });
+    }
+}
+
 #[derive(Debug)]
 struct ArchiveEntries {
-    entries: HashMap<HashedPath, Vec<ArchiveEntryPerReplica>>,
+    entries: FnvHashMap<HashedPath, Vec<ArchiveEntryPerReplica>>,
     dirty: bool
 }
 
 impl ArchiveEntries {
     fn new() -> Self {
         ArchiveEntries {
-            entries: HashMap::new(),
+            entries: Default::default(),
             dirty: false
         }
     }
@@ -205,7 +231,7 @@ impl ArchiveEntries {
     fn load_entries(&mut self, entries_vec: Vec<ArchiveEntry>) {
         self.entries.clear();
         for e in entries_vec {
-            self.entries.insert(e.path_hash/*Path::new(&e.path).to_path_buf()*/, e.replicas);
+            self.entries.insert(e.path_hash, e.replicas);
         };
         self.dirty = false;
     }
@@ -270,6 +296,7 @@ fn all_archive_files_valid(previous: &Vec<ArchiveEntryPerReplica>, current: &Vec
     true
 }
 
+/// checks if the path is on the ignore list
 fn is_ignored(replica: &SyncInfo, path: &Path) -> bool {
     for ignore in &replica.ignore_regex {
         if ignore.is_match(path.to_str().unwrap()) {
