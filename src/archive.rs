@@ -8,7 +8,8 @@ use bincode::SizeLimit;
 use util::hash_single;
 use byteorder::{Error as ByteorderError, WriteBytesExt, ReadBytesExt, LittleEndian};
 
-use state::{ArchiveEntry, ArchiveEntryPerReplica};
+use state::{HashedPath, ArchiveEntry, ArchiveEntryPerReplica};
+use util::FnvHashMap;
 
 const ARCHIVE_VERSION: u32 = 2;
 
@@ -30,20 +31,27 @@ impl Archive {
         self.directory.join(hash_single(directory).to_string())
     }
 
+    /// Returns an `ArchiveFile` struct which abstracts over operations on a single archive file.
+    /// Remember each 'file' in the archive represents an entire directory (not recursive) in the replicas.
     pub fn for_directory(&self, directory: &Path) -> ArchiveFile {
         return ArchiveFile { path: self.file_for_directory(directory) }
     }
 }
 
+/// Abstracts over operations on a single archive file.
+/// Remember each 'file' in the archive represents an entire directory (not recursive) in the replicas.
 pub struct ArchiveFile {
     path: PathBuf
 }
 
 impl ArchiveFile {
+    /// Remove all entries from this file.
+    /// This just slightly more efficient than writing an empty Vec.
     pub fn remove_all(&self) -> Result<(), io::Error> {
         remove_file(self.path.clone())
     }
 
+    /// Reads the archive entries into a Vec
     pub fn read(&self) -> Result<Vec<ArchiveEntry>, ReadError> {
         if self.path.exists() {
             let mut file = try!(File::open(self.path.clone()));
@@ -60,6 +68,7 @@ impl ArchiveFile {
         }
     }
 
+    /// Writes a Vec of entries
     pub fn write(&self, mut entries: Vec<ArchiveEntry>) -> Result<(), WriteError> {
         remove_deleted_entries(&mut entries);
 
@@ -77,6 +86,52 @@ impl ArchiveFile {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct ArchiveEntries {
+    entries: FnvHashMap<HashedPath, Vec<ArchiveEntryPerReplica>>,
+    pub dirty: bool
+}
+
+impl Into<ArchiveEntries> for Vec<ArchiveEntry> {
+    fn into(self) -> ArchiveEntries {
+        let mut a = ArchiveEntries::empty();
+        for item in self {
+            a.entries.insert(item.path_hash, item.replicas);
+        };
+        a
+    }
+}
+
+impl ArchiveEntries {
+    fn empty() -> Self {
+        ArchiveEntries {
+            entries: Default::default(),
+            dirty: false
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<ArchiveEntry> {
+        let mut entries_vec = Vec::new();
+        for (hash, info) in &self.entries {
+            entries_vec.push(ArchiveEntry::new(*hash, info.clone()));
+        }
+        entries_vec
+    }
+
+    pub fn get(&self, path: &Path) -> Option<&Vec<ArchiveEntryPerReplica>> {
+        self.entries.get(&hash_single(path))
+    }
+
+    pub fn insert(&mut self, path: &Path, entries: Vec<ArchiveEntryPerReplica>) {
+        let hashed_path = hash_single(path);
+
+        // warn because it means we are potentially being inefficient
+        warn!("Inserting data into archive for path {:?} (hashed: {})\n", path, hashed_path);
+        self.entries.insert(hashed_path, entries);
+        self.dirty = true;
     }
 }
 

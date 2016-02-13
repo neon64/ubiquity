@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 use std::fs::{read_dir};
 use std::hash::Hasher;
 use archive;
-use util::{hash_single, FnvHashMap};
+use util::{FnvHashMap};
 use error::SyncError;
 use compare_files::file_contents_equal_cmd;
 use std::os::unix::fs::MetadataExt;
-use state::{HashedPath, ArchiveEntry, ArchiveEntryPerReplica, CurrentEntryPerReplica, SyncInfo};
+use state::{ArchiveEntryPerReplica, CurrentEntryPerReplica, SyncInfo};
 use conflict::Conflict;
 
 #[derive(Debug)]
@@ -36,7 +36,6 @@ impl SearchDirectories {
 /// It starts with the list of search directories provided and loops through them looking for conflicts.
 /// If the recurse field of the SearchDirectories is set to true, then subdirectories inside each search directory will be added to the list.
 pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &mut SearchDirectories, config: &SyncInfo, progress_callback: &P) -> Result<(Vec<Conflict>, ConflictDetectionStatistics), SyncError> {
-    let mut archive_entries = ArchiveEntries::new();
     let mut current_entries: FnvHashMap<PathBuf, Vec<CurrentEntryPerReplica>> = Default::default();
     let mut conflicts = Vec::new();
     let mut stats = ConflictDetectionStatistics::new();
@@ -57,7 +56,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
         }
 
         // get the previous entries (a snapshot of what it was like)
-        archive_entries.load_entries(try!(archive.for_directory(&directory).read()));
+        let mut archive_entries: archive::ArchiveEntries = try!(archive.for_directory(&directory).read()).into();
 
         // creates a list of all the different entries in the directory
         info!("Reading dir {:?}", directory);
@@ -117,9 +116,9 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
             }
 
             let mut do_further_analysis = true;
-            if let Some(archive_entries) = archive_entries.get_for_path(path) {
+            if let Some(archive_entry) = archive_entries.get(path) {
                 trace!("Checking archive files");
-                let all_archive_files_valid = all_archive_files_valid(archive_entries, current_entry);
+                let all_archive_files_valid = all_archive_files_valid(archive_entry, current_entry);
                 if all_archive_files_valid {
                     stats.archive_hits += 1;
                     trace!("Archive files intact, no changes have been made");
@@ -134,7 +133,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
                     let equal_ty = ArchiveEntryPerReplica::equal_ty(&entry_window[0].archive, &entry_window[1].archive);
                     if !equal_ty {
                         info!("Conflict: Types not equal");
-                        add_conflict(&mut conflicts, path, archive_entries.get_for_path(path).cloned(), current_entry.clone());
+                        add_conflict(&mut conflicts, path, archive_entries.get(path).cloned(), current_entry.clone());
                         continue 'for_each_entry;
                     }
                 }
@@ -147,7 +146,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
                         let size_1 = try!(entry_window[1].path.metadata()).size();
                         if size_0 != size_1 {
                             info!("Conflict: File sizes not equal: {} != {}", size_0, size_1);
-                            add_conflict(&mut conflicts, path, archive_entries.get_for_path(path).cloned(), current_entry.clone());
+                            add_conflict(&mut conflicts, path, archive_entries.get(path).cloned(), current_entry.clone());
                             continue 'for_each_entry;
                         }
                     }
@@ -160,7 +159,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
                         if entry_window[0].archive.is_file_or_symlink() && entry_window[1].archive.is_file_or_symlink() {
                             if !try!(file_contents_equal_cmd(&entry_window[0].path, &entry_window[1].path)) {
                                 info!("Conflict: File contents not equal");
-                                add_conflict(&mut conflicts, path, archive_entries.get_for_path(path).cloned(), current_entry.clone());
+                                add_conflict(&mut conflicts, path, archive_entries.get(path).cloned(), current_entry.clone());
                                 continue 'for_each_entry;
                             }
                         }
@@ -169,7 +168,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
 
                 stats.archive_additions += 1;
                 // since we now know that each ArchiveEntry is identical, we can store that information in the archive
-                archive_entries.insert(path, &current_entry.iter().map(|e| e.archive).collect());
+                archive_entries.insert(path, current_entry.iter().map(|e| e.archive).collect());
             }
 
             // now we can assume that every replica contains an identical ArchiveEntry
@@ -184,7 +183,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
 
         if archive_entries.dirty {
             info!("Writing new archive files");
-            try!(archive.for_directory(&directory).write(archive_entries.get_entries_as_vec()));
+            try!(archive.for_directory(&directory).write(archive_entries.to_vec()));
         }
     }
     Ok((conflicts, stats))
@@ -211,50 +210,6 @@ fn add_conflict(conflicts: &mut Vec<Conflict>, path: &Path, previous: Option<Vec
             previous_state: previous,
             current_state: current
         });
-    }
-}
-
-#[derive(Debug)]
-struct ArchiveEntries {
-    entries: FnvHashMap<HashedPath, Vec<ArchiveEntryPerReplica>>,
-    dirty: bool
-}
-
-impl ArchiveEntries {
-    fn new() -> Self {
-        ArchiveEntries {
-            entries: Default::default(),
-            dirty: false
-        }
-    }
-
-    fn load_entries(&mut self, entries_vec: Vec<ArchiveEntry>) {
-        self.entries.clear();
-        for e in entries_vec {
-            self.entries.insert(e.path_hash, e.replicas);
-        };
-        self.dirty = false;
-    }
-
-    fn get_entries_as_vec(&self) -> Vec<ArchiveEntry> {
-        let mut entries_vec = Vec::new();
-        for (hash, info) in &self.entries {
-            entries_vec.push(ArchiveEntry::new(*hash, info.clone()));
-        }
-        entries_vec
-    }
-
-    fn get_for_path(&self, path: &Path) -> Option<&Vec<ArchiveEntryPerReplica>> {
-        self.entries.get(&hash_single(path))
-    }
-
-    fn insert(&mut self, path: &Path, entries: &Vec<ArchiveEntryPerReplica>) {
-        let hashed_path = hash_single(path);
-
-        // warn because it means we are being inefficient
-        warn!("Inserting data into archive for path {:?} (hashed: {})\n", path, hashed_path);
-        self.entries.insert(hashed_path, entries.clone());
-        self.dirty = true;
     }
 }
 

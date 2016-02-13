@@ -1,5 +1,3 @@
-use std::io::Read;
-use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::process::Command;
@@ -14,7 +12,7 @@ pub fn file_contents_equal_cmd(a: &Path, b: &Path) -> io::Result<bool> {
              .status()).code().unwrap() == 0)
 }
 
-pub fn file_contents_equal(a: &Path, b: &Path) -> io::Result<bool> {
+/*pub fn file_contents_equal(a: &Path, b: &Path) -> io::Result<bool> {
     debug!("Comparing {:?} with {:?}", a, b);
     let mut buf_a = vec![0; 4096];
     let mut buf_b = vec![0; 4096];
@@ -56,4 +54,4 @@ pub fn file_contents_equal(a: &Path, b: &Path) -> io::Result<bool> {
             trace!("Read {} blocks", i);
         }
     }
-}
+}*/

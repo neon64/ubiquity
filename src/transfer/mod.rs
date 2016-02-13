@@ -5,10 +5,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
-use util::hash_single;
 use error::SyncError;
-use archive::Archive;
-use state::{ArchiveEntry, ArchiveEntryPerReplica};
+use archive::{Archive, ArchiveEntries};
+use state::{ArchiveEntryPerReplica};
 
 pub struct ConflictResolutionOptions<'a> {
     pub before_delete: &'a Fn(&Path) -> bool
@@ -116,18 +115,6 @@ fn remove_directory_recursive(path: &Path, archive_update: &ArchiveUpdateInfo, o
 
     try!(archive_update.archive.for_directory(&archive_update.relative_path).remove_all());
 
-    /*for entry in try!(fs::read_dir(path)) {
-        let entry = try!(entry);
-
-        let ref child_archive_update = archive_update.for_child(&entry.file_name());
-
-        if try!(entry.metadata()).is_dir() {
-            try!(remove_directory_recursive(&entry.path(), child_archive_update, options));
-        } else {
-            try!(remove_file(&entry.path(), child_archive_update, options));
-        }
-    }*/
-
     debug!("Removing directory {:?}", path);
     try!(fs::remove_dir_all(path));
     update_archive(archive_update)
@@ -151,27 +138,9 @@ fn transfer_directory(source: &Path, dest: &Path, archive_update: &ArchiveUpdate
     try!(run_rsync(source, dest));
 
     info!("Updating archives");
-    for entry in WalkDir::new(source) {
-        let entry = try!(entry);
-        println!("{}", entry.path().display());
 
-        let ref child_archive_update = archive_update.for_child(entry.path().strip_prefix(dest).unwrap().as_os_str());
-        try!(update_archive(child_archive_update));
-    }
-
-    /*for entry in try!(fs::read_dir(source)) {
-        let entry = try!(entry);
-
-
-
-        if try!(entry.metadata()).is_dir() {
-            try!(transfer_directory(&entry.path(), &dest.join(entry.file_name()), child_archive_update));
-        } else {
-            try!(transfer_file(&entry.path(), &dest.join(entry.file_name()), child_archive_update));
-        }
-    }*/
-
-    Ok(())
+    try!(update_archive(archive_update));
+    update_archive_directory_contents(archive_update)
 }
 
 fn run_rsync(source: &Path, dest: &Path) -> io::Result<()> {
@@ -190,27 +159,38 @@ fn run_rsync(source: &Path, dest: &Path) -> io::Result<()> {
     Ok(())
 }
 
+
+fn update_archive_directory_contents(archive_update: &ArchiveUpdateInfo) -> Result<(), SyncError> {
+    let archive = archive_update.archive.for_directory(&archive_update.relative_path);
+    let mut entries: ArchiveEntries = try!(archive.read()).into();
+
+    for entry in try!(fs::read_dir(archive_update.absolute_paths[0].clone())) {
+        let entry = try!(entry);
+
+        let child_archive_update = archive_update.for_child(&entry.file_name());
+        let replicas = entries_for_paths(child_archive_update.absolute_paths.iter().map(|path| path.as_path()));
+        entries.insert(&child_archive_update.relative_path, replicas);
+
+        if try!(entry.metadata()).is_dir() {
+            try!(update_archive_directory_contents(&child_archive_update));
+        }
+    }
+
+    try!(archive.write(entries.to_vec()));
+
+    Ok(())
+}
+
 fn update_archive(archive_update: &ArchiveUpdateInfo) -> Result<(), SyncError> {
     let directory = archive_update.relative_path.parent().unwrap();
     let archive = archive_update.archive.for_directory(directory);
-    let mut entries = try!(archive.read());
-    let path_hash = hash_single(&archive_update.relative_path);
-    let mut found = false;
-    for entry in &mut entries {
-        if entry.path_hash == path_hash {
-            trace!("Updating data in archive for path {:?} (hashed: {})", archive_update.relative_path, path_hash);
-            entry.replicas = entries_for_paths(archive_update.absolute_paths.iter().map(|path| path.as_path()));
-            found = true;
-        }
-    }
-    // insert if it wasn't found
-    if !found {
-        trace!("Inserting data into archive for path {:?} (hashed: {})", archive_update.relative_path, path_hash);
-        let replicas = entries_for_paths(archive_update.absolute_paths.iter().map(|path| path.as_path()));
-        entries.push(ArchiveEntry::new(path_hash, replicas));
-    }
+    let mut entries: ArchiveEntries = try!(archive.read()).into();
 
-    try!(archive.write(entries));
+    let replicas = entries_for_paths(archive_update.absolute_paths.iter().map(|path| path.as_path()));
+    entries.insert(&archive_update.relative_path, replicas);
+
+    try!(archive.write(entries.to_vec()));
+
     Ok(())
 }
 
