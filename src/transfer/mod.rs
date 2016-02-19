@@ -103,7 +103,7 @@ fn remove_directory_recursive(path: &Path, archive_update: &ArchiveUpdateInfo, o
         return Err(SyncError::Cancelled);
     }
 
-    info!("Removing archive files for directory {:?} (and contents)", path);
+    debug!("Removing archive files for contents of {:?}", path);
     for entry in WalkDir::new(path) {
         let entry = try!(entry);
         if try!(entry.metadata()).is_dir() {
@@ -113,9 +113,10 @@ fn remove_directory_recursive(path: &Path, archive_update: &ArchiveUpdateInfo, o
         }
     }
 
+    debug!("Removing archive file for directory {:?}", path);
     try!(archive_update.archive.for_directory(&archive_update.relative_path).remove_all());
 
-    debug!("Removing directory {:?}", path);
+    info!("Removing directory {:?}", path);
     try!(fs::remove_dir_all(path));
     update_archive(archive_update)
 }
@@ -138,7 +139,6 @@ fn transfer_directory(source: &Path, dest: &Path, archive_update: &ArchiveUpdate
     try!(run_rsync(source, dest));
 
     info!("Updating archives");
-
     try!(update_archive(archive_update));
     update_archive_directory_contents(archive_update)
 }
@@ -150,7 +150,8 @@ fn run_rsync(source: &Path, dest: &Path) -> io::Result<()> {
         source_str.push_str("/");
     }
     let mut command = Command::new("rsync");
-    let command = command.arg("-av")
+    let command = command.arg("-a")
+        .arg("--info=progress2")
         .arg(source_str)
         .arg(dest.to_string_lossy().as_ref());
     let status = try!(command.status());

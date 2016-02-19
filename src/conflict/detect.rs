@@ -56,7 +56,8 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
         }
 
         // get the previous entries (a snapshot of what it was like)
-        let mut archive_entries: archive::ArchiveEntries = try!(archive.for_directory(&directory).read()).into();
+        let archive_for_directory = archive.for_directory(&directory);
+        let mut archive_entries: archive::ArchiveEntries = try!(archive_for_directory.read()).into();
 
         // creates a list of all the different entries in the directory
         info!("Reading dir {:?}", directory);
@@ -183,7 +184,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
 
         if archive_entries.dirty {
             info!("Writing new archive files");
-            try!(archive.for_directory(&directory).write(archive_entries.to_vec()));
+            try!(archive_for_directory.write(archive_entries.to_vec()));
         }
     }
     Ok((conflicts, stats))

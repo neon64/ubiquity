@@ -12,6 +12,8 @@ byteorder = "0.4"
 log = "*"
 regex = "*"
 term = "*"
+fs2 = "0.2.2"
+#file-lock = { version = "0.0.17", features = ["unstable"] }
 walkdir = "0.1.5"
 
 [dev_dependencies]

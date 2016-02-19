@@ -1,5 +1,4 @@
 #![feature(plugin)]
-#![feature(hashmap_hasher)]
 #![feature(custom_derive)]
 #![plugin(serde_macros)]
 
@@ -12,6 +11,7 @@ extern crate byteorder;
 #[macro_use]
 extern crate log;
 extern crate walkdir;
+extern crate fs2;
 
 pub mod conflict;
 pub mod archive;
