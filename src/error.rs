@@ -7,7 +7,7 @@ use walkdir::Error as WalkDirError;
 #[derive(Debug)]
 pub enum SyncError {
     PathModified(PathBuf),
-    IoError(io::Error),
+    IoError(io::Error, Option<String>),
     RootDoesntExist(PathBuf),
     AbsolutePathProvided(PathBuf),
     ArchiveReadError(archive::ReadError),
@@ -19,7 +19,13 @@ pub enum SyncError {
 
 impl From<io::Error> for SyncError {
     fn from(e: io::Error) -> Self {
-        SyncError::IoError(e)
+        SyncError::IoError(e, None)
+    }
+}
+
+impl From<(io::Error, String)> for SyncError {
+    fn from(e: (io::Error, String)) -> Self {
+        SyncError::IoError(e.0, Some(e.1))
     }
 }
 
@@ -45,7 +51,8 @@ impl fmt::Display for SyncError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             SyncError::PathModified(ref path) => write!(f, "the file/directory at {:?} was modified by another application", path),
-            SyncError::IoError(ref io) => write!(f, "io error: {}", io),
+            SyncError::IoError(ref io, Some(ref message)) => write!(f, "io error: {}, ({})", io, message),
+            SyncError::IoError(ref io, None) => write!(f, "io error: {}", io),
             SyncError::RootDoesntExist(ref root) => write!(f, "root does not exist: {:?}", root),
             SyncError::AbsolutePathProvided(ref path) => write!(f, "the absolute path {:?} is invalid (hint: search directories must be relative to the replica root)", path),
             SyncError::ArchiveWriteError(ref e) => write!(f, "archive write error: {:?}", e),
@@ -53,5 +60,17 @@ impl fmt::Display for SyncError {
             SyncError::Cancelled => write!(f, "operation cancelled"),
             SyncError::WalkDirError(ref e) => write!(f, "walk dir error: {:?}", e)
         }
+    }
+}
+
+pub trait DescribeIoError<T> {
+    fn describe<F, I>(self, message: F) -> Result<T, (io::Error, String)> where F: Fn() -> I, I: Into<String>;
+}
+
+impl<T> DescribeIoError<T> for Result<T, io::Error> {
+    fn describe<F, I>(self, message: F) -> Result<T, (io::Error, String)> where F: Fn() -> I, I: Into<String> {
+        self.map_err(|e|
+            (e, message().into())
+        )
     }
 }

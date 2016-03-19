@@ -5,13 +5,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
-use error::SyncError;
+use error::{SyncError, DescribeIoError};
 use archive::{Archive, ArchiveEntries};
 use state::{ArchiveEntryPerReplica};
-
-pub struct ConflictResolutionOptions<'a> {
-    pub before_delete: &'a Fn(&Path) -> bool
-}
 
 /// Resolves a conflict, by making the replica indexed by 'master' the master copy.
 /// All other replicas will be mirrored to match the master copy.
@@ -62,16 +58,49 @@ pub fn resolve_conflict(conflict: &Conflict, master: usize, archive: &Archive, o
             },
             ArchiveEntryPerReplica::Symlink(_) => unimplemented!()
         };
-        /*if master_exists {
-            try!(copy_between(&master_entry.path, &replica.path));
-        } else {
-            try!(remove_at_path(&replica.path));
-        }*/
     }
 
     Ok(())
 }
 
+/// ConflictResolutionOptions allow the client to customize how files are transferred/deleted.
+pub struct ConflictResolutionOptions<'a> {
+    /// return false to cancel deleting a directory
+    pub before_remove_dir: &'a Fn(&Path) -> bool,
+    /// return `SyncError::Cancelled` to cancel deleting the file,
+    /// otherwise delete the file/move it to the trash.
+    pub remove_file: &'a Fn(&Path) -> Result<(), SyncError>,
+    /// delete the directory and its contents
+    pub remove_dir_all: &'a Fn(&Path) -> Result<(), SyncError>
+}
+
+static RETURN_TRUE: fn(&Path) -> bool = return_true;
+static REMOVE_FILE: fn(&Path) -> Result<(), SyncError> = rm_file;
+static REMOVE_DIR_ALL: fn(&Path) -> Result<(), SyncError> = rm_dir_all;
+
+fn return_true(_: &Path) -> bool {
+    true
+}
+fn rm_file(path: &Path) -> Result<(), SyncError> {
+    try!(fs::remove_file(path));
+    Ok(())
+}
+fn rm_dir_all(path: &Path) -> Result<(), SyncError> {
+    try!(fs::remove_dir_all(path).describe(|| format!("when removing directory {:?}", path)));
+    Ok(())
+}
+
+impl Default for ConflictResolutionOptions<'static> {
+    fn default() -> ConflictResolutionOptions<'static> {
+        ConflictResolutionOptions {
+            before_remove_dir: &RETURN_TRUE as &'static Fn(&Path) -> bool,
+            remove_file: &REMOVE_FILE as &'static Fn(&Path) -> Result<(), SyncError>,
+            remove_dir_all: &REMOVE_DIR_ALL as &'static Fn(&Path) -> Result<(), SyncError>,
+        }
+    }
+}
+
+/// Information required to update an entry in the archive.
 struct ArchiveUpdateInfo<'a> {
     archive: &'a Archive,
     relative_path: PathBuf,
@@ -91,15 +120,19 @@ impl<'a> ArchiveUpdateInfo<'a> {
 
 fn remove_file(path: &Path, archive_update: &ArchiveUpdateInfo, options: &ConflictResolutionOptions) -> Result<(), SyncError> {
     info!("Removing file {:?}", path);
-    if !(options.before_delete)(path) {
+
+    // delegate the actual removal to a callback function
+    try!((options.remove_file)(path));
+    /*if !(options.before_delete)(path) {
         return Err(SyncError::Cancelled);
     }
-    try!(fs::remove_file(path));
+    try!(fs::remove_file(path));*/
+    debug!("Updating archives");
     update_archive(archive_update)
 }
 
 fn remove_directory_recursive(path: &Path, archive_update: &ArchiveUpdateInfo, options: &ConflictResolutionOptions) -> Result<(), SyncError> {
-    if !(options.before_delete)(path) {
+    if !(options.before_remove_dir)(path) {
         return Err(SyncError::Cancelled);
     }
 
@@ -117,7 +150,8 @@ fn remove_directory_recursive(path: &Path, archive_update: &ArchiveUpdateInfo, o
     try!(archive_update.archive.for_directory(&archive_update.relative_path).remove_all());
 
     info!("Removing directory {:?}", path);
-    try!(fs::remove_dir_all(path));
+    try!((options.remove_dir_all)(path));
+    //try!(fs::remove_dir_all(path).describe(|| format!("when removing directory {:?}", path)));
     update_archive(archive_update)
 }
 
@@ -129,6 +163,7 @@ fn transfer_file(source: &Path, dest: &Path, archive_update: &ArchiveUpdateInfo)
     }
     info!("Transferring file {:?} to {:?}", source, dest);
     try!(run_rsync(source, dest));
+    debug!("Updating archives");
     update_archive(archive_update)
 }
 
@@ -136,9 +171,9 @@ fn transfer_directory(source: &Path, dest: &Path, archive_update: &ArchiveUpdate
     try!(fs::create_dir_all(dest));
 
     info!("Copying directory {:?}", dest);
-    try!(run_rsync(source, dest));
+    try!(run_rsync(source, dest).describe(|| format!("while copying directory from {:?} to {:?}", source, dest)));
 
-    info!("Updating archives");
+    debug!("Updating archives");
     try!(update_archive(archive_update));
     update_archive_directory_contents(archive_update)
 }
@@ -149,7 +184,7 @@ fn run_rsync(source: &Path, dest: &Path) -> io::Result<()> {
     if append_slash {
         source_str.push_str("/");
     }
-    let mut command = Command::new("rsync");
+    let mut command = Command::new("/usr/local/bin/rsync");
     let command = command.arg("-a")
         .arg("--info=progress2")
         .arg(source_str)
@@ -162,10 +197,11 @@ fn run_rsync(source: &Path, dest: &Path) -> io::Result<()> {
 
 
 fn update_archive_directory_contents(archive_update: &ArchiveUpdateInfo) -> Result<(), SyncError> {
-    let archive = archive_update.archive.for_directory(&archive_update.relative_path);
+    let mut archive = archive_update.archive.for_directory(&archive_update.relative_path);
     let mut entries: ArchiveEntries = try!(archive.read()).into();
 
-    for entry in try!(fs::read_dir(archive_update.absolute_paths[0].clone())) {
+    let ref dir = archive_update.absolute_paths[0];
+    for entry in try!(fs::read_dir(dir.clone())) {
         let entry = try!(entry);
 
         let child_archive_update = archive_update.for_child(&entry.file_name());
@@ -177,20 +213,20 @@ fn update_archive_directory_contents(archive_update: &ArchiveUpdateInfo) -> Resu
         }
     }
 
-    try!(archive.write(entries.to_vec()));
+    try!(archive.write(entries));
 
     Ok(())
 }
 
 fn update_archive(archive_update: &ArchiveUpdateInfo) -> Result<(), SyncError> {
     let directory = archive_update.relative_path.parent().unwrap();
-    let archive = archive_update.archive.for_directory(directory);
+    let mut archive = archive_update.archive.for_directory(directory);
     let mut entries: ArchiveEntries = try!(archive.read()).into();
 
     let replicas = entries_for_paths(archive_update.absolute_paths.iter().map(|path| path.as_path()));
     entries.insert(&archive_update.relative_path, replicas);
 
-    try!(archive.write(entries.to_vec()));
+    try!(archive.write(entries));
 
     Ok(())
 }

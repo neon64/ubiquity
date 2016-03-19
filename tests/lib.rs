@@ -3,6 +3,8 @@
 extern crate env_logger;
 extern crate ubiquity;
 extern crate regex;
+#[macro_use]
+extern crate log;
 
 use regex::Regex;
 
@@ -12,7 +14,8 @@ use std::io;
 use std::io::Write;
 
 use ubiquity::state::SyncInfo;
-use ubiquity::conflict::{detect};
+use ubiquity::conflict::{detect, resolve};
+use ubiquity::transfer;
 use ubiquity::archive::Archive;
 
 fn set_up() -> (Archive, SyncInfo) {
@@ -27,6 +30,7 @@ fn set_up() -> (Archive, SyncInfo) {
         compare_file_contents: true
     };
 
+    clean_directory(Path::new("tests/archive")).unwrap();
     clean_directory(Path::new("tests/root_a")).unwrap();
     clean_directory(Path::new("tests/root_b")).unwrap();
 
@@ -80,6 +84,51 @@ fn test_nested_conflicts_are_removed() {
     let (conflicts, _) = detect::find_conflicts(&archive, &mut sd, &config, &detect::NoProgress).unwrap();
     assert_eq!(conflicts.len(), 1);
     assert_eq!(&conflicts[0].path, Path::new("baz"));
+}
+
+#[test]
+fn test_conflicts_are_resolved() {
+    let (archive, config) = set_up();
+    let ref sd = detect::SearchDirectories::from_root();
+
+    detect_and_resolve(&archive, &config, sd);
+
+    // test creations
+    fs::create_dir("tests/root_a/baz").unwrap();
+    fs::File::create("tests/root_a/baz/cub").unwrap();
+
+    detect_and_resolve(&archive, &config, sd);
+
+    let (conflicts, _) = detect::find_conflicts(&archive, &mut sd.clone(), &config, &detect::NoProgress).unwrap();
+    assert_eq!(conflicts.len(), 0);
+
+    // test deletions
+    fs::remove_dir_all("tests/root_a/baz").unwrap();
+
+    detect_and_resolve(&archive, &config, sd);
+
+    let (conflicts, _) = detect::find_conflicts(&archive, &mut sd.clone(), &config, &detect::NoProgress).unwrap();
+    assert_eq!(conflicts.len(), 0);
+}
+
+#[test]
+fn test_regex_forward_slash() {
+    let r = regex::Regex::new(r"/target/").unwrap();
+    assert!(r.is_match("/Users/bob/awesome/target/foo"));
+    assert!(!r.is_match("/Users/bob/awesome/target"));
+}
+
+fn detect_and_resolve(archive: &Archive, config: &SyncInfo, search_directories: &detect::SearchDirectories) {
+    let (conflicts, _) = detect::find_conflicts(archive, &mut search_directories.clone(), config, &detect::NoProgress).unwrap();
+
+    info!("{} conflicts", conflicts.len());
+    for conflict in conflicts {
+        let resolution = resolve::guess(&conflict);
+        info!("Conflict {:?} (resolving using {:?})", conflict.path, resolution);
+        if let Some(master) = resolution {
+            transfer::resolve_conflict(&conflict, master, &archive, &Default::default()).unwrap();
+        }
+    }
 }
 
 fn clean_directory(p: &Path) -> io::Result<()> {

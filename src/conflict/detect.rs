@@ -1,43 +1,21 @@
 use std::path::{Path, PathBuf};
 use std::fs::{read_dir};
 use std::hash::Hasher;
-use archive;
-use util::{FnvHashMap};
-use error::SyncError;
-use compare_files::file_contents_equal_cmd;
 use std::os::unix::fs::MetadataExt;
-use state::{ArchiveEntryPerReplica, CurrentEntryPerReplica, SyncInfo};
+
 use conflict::Conflict;
-
-#[derive(Debug)]
-pub struct SearchDirectories {
-    pub directories: Vec<PathBuf>,
-    pub recurse: bool
-}
-
-impl SearchDirectories {
-    pub fn from_root() -> SearchDirectories {
-        SearchDirectories {
-            directories: vec![Path::new("").to_path_buf()],
-            recurse: true
-        }
-    }
-
-    pub fn new(directories: Vec<PathBuf>, recurse: bool) -> Self {
-        SearchDirectories {
-            directories: directories,
-            recurse: recurse
-        }
-    }
-}
-
+use archive;
+use util::FnvHashMap;
+use error::SyncError;
+use state::{ArchiveEntryPerReplica, CurrentEntryPerReplica, SyncInfo};
+use compare_files::file_contents_equal_cmd;
 
 /// This mammoth function detects all conflicts between the two replicas.
 /// It starts with the list of search directories provided and loops through them looking for conflicts.
 /// If the recurse field of the SearchDirectories is set to true, then subdirectories inside each search directory will be added to the list.
 pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &mut SearchDirectories, config: &SyncInfo, progress_callback: &P) -> Result<(Vec<Conflict>, ConflictDetectionStatistics), SyncError> {
     let mut current_entries: FnvHashMap<PathBuf, Vec<CurrentEntryPerReplica>> = Default::default();
-    let mut conflicts = Vec::new();
+    let mut conflicts = ConflictList { list: Vec::new() };
     let mut stats = ConflictDetectionStatistics::new();
     for root in &config.roots {
         if !root.exists() {
@@ -56,7 +34,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
         }
 
         // get the previous entries (a snapshot of what it was like)
-        let archive_for_directory = archive.for_directory(&directory);
+        let mut archive_for_directory = archive.for_directory(&directory);
         let mut archive_entries: archive::ArchiveEntries = try!(archive_for_directory.read()).into();
 
         // creates a list of all the different entries in the directory
@@ -116,60 +94,21 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
                 current_entry.push(CurrentEntryPerReplica { path: absolute_path, archive: a });
             }
 
-            let mut do_further_analysis = true;
+            let mut keep_checking = true;
             if let Some(archive_entry) = archive_entries.get(path) {
                 trace!("Checking archive files");
-                let all_archive_files_valid = all_archive_files_valid(archive_entry, current_entry);
+                let all_archive_files_valid = are_archive_files_fresh(archive_entry, current_entry);
                 if all_archive_files_valid {
                     stats.archive_hits += 1;
-                    trace!("Archive files intact, no changes have been made");
-                    do_further_analysis = false;
+                    keep_checking = false;
                 }
             }
 
-            if do_further_analysis {
-                trace!("Checking for incompatible entry types (eg: file vs folder vs empty)");
-                // loop through 'abcdef' like: ab bc cd de ef
-                for entry_window in current_entry.windows(2) {
-                    let equal_ty = ArchiveEntryPerReplica::equal_ty(&entry_window[0].archive, &entry_window[1].archive);
-                    if !equal_ty {
-                        info!("Conflict: Types not equal");
-                        add_conflict(&mut conflicts, path, archive_entries.get(path).cloned(), current_entry.clone());
-                        continue 'for_each_entry;
-                    }
+            if keep_checking {
+                if let Some(conflict) = try!(do_further_analysis(path, &mut archive_entries, current_entry, &mut stats, config.compare_file_contents)) {
+                    conflicts.add(conflict);
+                    continue 'for_each_entry;
                 }
-
-                trace!("Checking for different file sizes");
-                for entry_window in current_entry.windows(2) {
-                    // if the sizes are different
-                    if entry_window[0].archive.is_file_or_symlink() && entry_window[1].archive.is_file_or_symlink() {
-                        let size_0 = try!(entry_window[0].path.metadata()).size();
-                        let size_1 = try!(entry_window[1].path.metadata()).size();
-                        if size_0 != size_1 {
-                            info!("Conflict: File sizes not equal: {} != {}", size_0, size_1);
-                            add_conflict(&mut conflicts, path, archive_entries.get(path).cloned(), current_entry.clone());
-                            continue 'for_each_entry;
-                        }
-                    }
-                }
-
-                // If they are both files, we will compare the contents
-                if config.compare_file_contents {
-                    trace!("Checking file contents");
-                    for entry_window in current_entry.windows(2) {
-                        if entry_window[0].archive.is_file_or_symlink() && entry_window[1].archive.is_file_or_symlink() {
-                            if !try!(file_contents_equal_cmd(&entry_window[0].path, &entry_window[1].path)) {
-                                info!("Conflict: File contents not equal");
-                                add_conflict(&mut conflicts, path, archive_entries.get(path).cloned(), current_entry.clone());
-                                continue 'for_each_entry;
-                            }
-                        }
-                    }
-                }
-
-                stats.archive_additions += 1;
-                // since we now know that each ArchiveEntry is identical, we can store that information in the archive
-                archive_entries.insert(path, current_entry.iter().map(|e| e.archive).collect());
             }
 
             // now we can assume that every replica contains an identical ArchiveEntry
@@ -183,35 +122,118 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
         }
 
         if archive_entries.dirty {
-            info!("Writing new archive files");
-            try!(archive_for_directory.write(archive_entries.to_vec()));
+            try!(archive_for_directory.write(archive_entries));
         }
     }
-    Ok((conflicts, stats))
+
+    Ok((conflicts.list, stats))
 }
 
-/// adds a new conflict to the list, using the provided path and previous/current archive information
-fn add_conflict(conflicts: &mut Vec<Conflict>, path: &Path, previous: Option<Vec<ArchiveEntryPerReplica>>, current: Vec<CurrentEntryPerReplica>) {
-    let mut add = true;
-    conflicts.retain(|conflict| {
-        if conflict.path.starts_with(path) {
-            debug!("Removing nested conflict at {:?}", conflict.path);
-            false
-        } else {
-            if path.starts_with(&conflict.path) {
-                debug!("Not adding nested conflict at {:?}", path);
-                add = false;
-            }
-            true
+/// The list of directories to be searched.
+#[derive(Debug, Clone)]
+pub struct SearchDirectories {
+    pub directories: Vec<PathBuf>,
+    pub recurse: bool
+}
+
+impl SearchDirectories {
+    pub fn from_root() -> SearchDirectories {
+        SearchDirectories {
+            directories: vec![Path::new("").to_path_buf()],
+            recurse: true
         }
-    });
-    if add {
-        conflicts.push(Conflict {
-            path: path.to_path_buf(),
-            previous_state: previous,
-            current_state: current
-        });
     }
+
+    pub fn new(directories: Vec<PathBuf>, recurse: bool) -> Self {
+        SearchDirectories {
+            directories: directories,
+            recurse: recurse
+        }
+    }
+}
+
+struct ConflictList {
+    list: Vec<Conflict>
+}
+
+impl ConflictList {
+    fn add(&mut self, conflict: Conflict) {
+        let mut add = true;
+
+        self.list.retain(|other| {
+            if other.path.starts_with(&conflict.path) {
+                debug!("Removing nested conflict at {:?}", other.path);
+                false
+            } else if conflict.path.starts_with(&other.path) {
+                debug!("Not adding nested conflict at {:?}", conflict.path);
+                add = false;
+                true
+            } else {
+                true
+            }
+        });
+
+        if add {
+            self.list.push(conflict);
+        }
+    }
+}
+
+fn do_further_analysis(path: &Path, archive_entries: &mut archive::ArchiveEntries, current_entry: &Vec<CurrentEntryPerReplica>, stats: &mut ConflictDetectionStatistics, compare_file_contents: bool) -> Result<Option<Conflict>, SyncError> {
+    trace!("Checking for incompatible entry types (eg: file vs folder vs empty)");
+    // loop through 'abcdef' like: ab bc cd de ef
+    for entry_window in current_entry.windows(2) {
+        let equal_ty = ArchiveEntryPerReplica::equal_ty(&entry_window[0].archive, &entry_window[1].archive);
+        if !equal_ty {
+            info!("Conflict: types not equal");
+            return Ok(Some(Conflict {
+                path: path.to_path_buf(),
+                previous_state: archive_entries.get(path).cloned(),
+                current_state: current_entry.clone()
+            }));
+        }
+    }
+
+    trace!("Checking for different file sizes");
+    for entry_window in current_entry.windows(2) {
+        // if the sizes are different
+        if entry_window[0].archive.is_file_or_symlink() && entry_window[1].archive.is_file_or_symlink() {
+            let size_0 = try!(entry_window[0].path.metadata()).size();
+            let size_1 = try!(entry_window[1].path.metadata()).size();
+            if size_0 != size_1 {
+                info!("Conflict: file sizes not equal: {} != {}", size_0, size_1);
+                return Ok(Some(Conflict {
+                    path: path.to_path_buf(),
+                    previous_state: archive_entries.get(path).cloned(),
+                    current_state: current_entry.clone()
+                }));
+            }
+        }
+    }
+
+    // If they are both files, we will compare the contents
+    if compare_file_contents {
+        trace!("Checking file contents");
+        for entry_window in current_entry.windows(2) {
+            if entry_window[0].archive.is_file_or_symlink() && entry_window[1].archive.is_file_or_symlink() {
+                if !try!(file_contents_equal_cmd(&entry_window[0].path, &entry_window[1].path)) {
+                    info!("Conflict: file contents not equal");
+                    return Ok(Some(Conflict {
+                        path: path.to_path_buf(),
+                        previous_state: archive_entries.get(path).cloned(),
+                        current_state: current_entry.clone()
+                    }));
+                }
+            }
+        }
+    }
+
+    stats.archive_additions += 1;
+
+    // since we now know that each ArchiveEntry is identical, we can store that information in the archive
+    archive_entries.insert(path, current_entry.iter().map(|e| e.archive).collect());
+
+    Ok(None)
 }
 
 #[derive(Debug)]
@@ -242,10 +264,10 @@ impl ProgressCallback for NoProgress {
     fn analysing_entry(&self, _: &Path, _: usize, _: usize) {}
 }
 
-fn all_archive_files_valid(previous: &Vec<ArchiveEntryPerReplica>, current: &Vec<CurrentEntryPerReplica>) -> bool {
+/// checks that all the archive files for this path are identical
+fn are_archive_files_fresh(previous: &Vec<ArchiveEntryPerReplica>, current: &Vec<CurrentEntryPerReplica>) -> bool {
     for (archive_entry, current_entry) in previous.iter().zip(current) {
         if archive_entry != &current_entry.archive {
-            trace!("Archives differ");
             return false;
         }
     }
@@ -254,13 +276,15 @@ fn all_archive_files_valid(previous: &Vec<ArchiveEntryPerReplica>, current: &Vec
 
 /// checks if the path is on the ignore list
 fn is_ignored(replica: &SyncInfo, path: &Path) -> bool {
-    for ignore in &replica.ignore_regex {
-        if ignore.is_match(path.to_str().unwrap()) {
+    for ignore in &replica.ignore_path {
+        trace!("{:?} starts with {:?} = {}", path, ignore, path.starts_with(ignore));
+        if path.starts_with(ignore) {
             return true;
         }
     }
-    for ignore in &replica.ignore_path {
-        if ignore == path.to_str().unwrap() {
+    for ignore in &replica.ignore_regex {
+        trace!("{:?} is match {:?} = {}", ignore, path.to_str().unwrap(), ignore.is_match(path.to_str().unwrap()));
+        if ignore.is_match(path.to_str().unwrap()) {
             return true;
         }
     }

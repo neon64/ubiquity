@@ -12,8 +12,3 @@ pub struct Conflict {
     pub previous_state: Option<Vec<ArchiveEntryPerReplica>>,
     pub current_state: Vec<CurrentEntryPerReplica>
 }
-
-#[derive(Serialize, Deserialize)]
-pub struct SmallConflict {
-    pub path: PathBuf
-}

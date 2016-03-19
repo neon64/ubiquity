@@ -1,13 +1,13 @@
 use std::io;
+use std::io::Seek;
 use std::convert::From;
 use std::hash::Hasher;
-use std::fs::{File, create_dir_all, remove_file};
+use std::fs::{OpenOptions, File, create_dir_all, remove_file};
 use std::path::{Path, PathBuf};
 use bincode::serde::{serialize_into, deserialize_from, DeserializeError, SerializeError};
 use bincode::SizeLimit;
 use util::hash_single;
 use byteorder::{Error as ByteorderError, WriteBytesExt, ReadBytesExt, LittleEndian};
-//use file_lock::{Error, Lock, LockKind, AccessMode};
 use fs2::FileExt;
 
 use state::{HashedPath, ArchiveEntry, ArchiveEntryPerReplica};
@@ -41,32 +41,15 @@ impl Archive {
 /// Abstracts over operations on a single archive file.
 /// Remember each 'file' in the archive represents an entire directory (not recursive) in the replicas.
 pub struct ArchiveFile {
-    path: PathBuf
+    path: PathBuf,
+    file: Option<File>
 }
 
 impl ArchiveFile {
 
     /// Creates a new wrapper around the given archive file.
-    /// Through doing so this will acquire (or wait for) a lock,
-    /// ensuring that multiple threads/processes aren't writing to the same archive file.
     pub fn new(path: PathBuf) -> ArchiveFile {
-        /*let lock_path = path.with_extension("lock");
-        let lock_file = OpenOptions::new().create(true).open(lock_path).unwrap();
-        let lock = Lock::new(lock_file.as_raw_fd());
-        match lock.lock(LockKind::NonBlocking, AccessMode::Write) {
-            Ok(_) => (),
-            Err(Error::Errno(i))
-              => println!("Got filesystem error while locking {}", i),
-        }*/
-
-        if path.exists() {
-            let f = File::open(path.clone()).unwrap();
-            trace!("Acquiring lock for {:?}", path);
-            f.lock_exclusive().unwrap();
-            trace!("Acquired lock");
-        }
-
-        ArchiveFile { path: path }
+        ArchiveFile { path: path, file: None }
     }
 
     /// Remove all entries from this file.
@@ -80,37 +63,47 @@ impl ArchiveFile {
     }
 
     /// Reads the archive entries into a Vec
-    pub fn read(&self) -> Result<Vec<ArchiveEntry>, ReadError> {
-        if self.path.exists() {
-            let mut file = try!(File::open(self.path.clone()));
-            match read_entries(&mut file) {
-                Ok(i) => Ok(i),
-                Err(ReadError::InvalidArchiveVersion(version)) => {
-                    info!("Archive file {:?} using outdated version ({})", self.path, version);
-                    Ok(Vec::new())
-                },
-                Err(e) => Err(From::from(e))
-            }
+    /// This may acquire (or wait for) a lock,
+    /// ensuring that multiple threads/processes aren't reading/writing to/from the same archive file.
+    pub fn read(&mut self) -> Result<Vec<ArchiveEntry>, ReadError> {
+        if let Some(ref mut file) = self.file {
+            read_from_file(file, &self.path)
+        } else if self.path.exists()  {
+            let mut file = try!(self.open_file());
+            let res = read_from_file(&mut file, &self.path);
+            self.file = Some(file);
+            res
         } else {
             Ok(Vec::new()) // an empty set of entries
         }
     }
 
-    /// Writes a Vec of entries
-    pub fn write(&self, mut entries: Vec<ArchiveEntry>) -> Result<(), WriteError> {
-        remove_deleted_entries(&mut entries);
+    fn open_file(&self) -> Result<File, io::Error> {
+        let file = try!(OpenOptions::new().read(true).write(true).create(true).open(&self.path));
+        trace!("Acquiring shared lock for {:?}", self.path);
+        file.lock_exclusive().unwrap();
+        trace!("Acquired lock");
+        Ok(file)
+    }
 
+    /// Writes a Vec of entries
+    pub fn write<I>(&mut self, entries: I) -> Result<(), WriteError> where I: Into<Vec<ArchiveEntry>> {
+        let entries = &mut entries.into();
+        remove_deleted_entries(entries);
         if entries.is_empty() {
             if self.path.exists() {
                 debug!("Removing archive file {:?} (because entries are empty)", self.path);
+                self.file = None;
                 try!(remove_file(self.path.clone()));
             } else {
                 debug!("Tried to remove archive file {:?} (because entries are empty), but it doesn't exist ", self.path);
             }
+        } else if let Some(ref mut file) = self.file {
+            try!(write_to_file(file, &self.path, &entries));
         } else {
-            debug!("Writing archive file {:?}", self.path);
-            let ref mut file = try!(File::create(self.path.clone()));
-            try!(write_entries(file, &entries));
+            let mut file = try!(self.open_file());
+            try!(write_to_file(&mut file, &self.path, &entries));
+            self.file = Some(file);
         }
 
         Ok(())
@@ -135,13 +128,18 @@ pub struct ArchiveEntries {
     pub dirty: bool
 }
 
-impl Into<ArchiveEntries> for Vec<ArchiveEntry> {
-    fn into(self) -> ArchiveEntries {
+impl From<Vec<ArchiveEntry>> for ArchiveEntries {
+    fn from(vec: Vec<ArchiveEntry>) -> ArchiveEntries {
         let mut a = ArchiveEntries::empty();
-        for item in self {
+        for item in vec {
             a.entries.insert(item.path_hash, item.replicas);
         };
         a
+    }
+}
+impl Into<Vec<ArchiveEntry>> for ArchiveEntries {
+    fn into(self) -> Vec<ArchiveEntry> {
+        self.to_vec()
     }
 }
 
@@ -170,6 +168,7 @@ impl ArchiveEntries {
 
         // this means we are potentially being inefficient
         info!("Inserting data into archive for path {:?} (hashed: {})", path, hashed_path);
+        trace!("{:#?}", entries);
         self.entries.insert(hashed_path, entries);
         self.dirty = true;
     }
@@ -192,6 +191,35 @@ fn remove_deleted_entries(entries: &mut Vec<ArchiveEntry>) {
         }
         keep
     });
+}
+
+fn read_from_file(file: &mut File, path: &Path) -> Result<Vec<ArchiveEntry>, ReadError> {
+    debug!("Reading archive file {:?}", path);
+    try!(file.seek(io::SeekFrom::Start(0)));
+    match read_entries(file) {
+        Ok(i) => Ok(i),
+        Err(ReadError::InvalidArchiveVersion(version)) => {
+            error!("Invalid archive version {} for file {:?}", version, path);
+            Ok(Vec::new())
+        },
+        Err(ReadError::DeserializeError(DeserializeError::EndOfStreamError)) | Err(ReadError::ByteOrderError(ByteorderError::UnexpectedEOF)) => {
+            error!("End of stream when reading archive file at path {:?}", path);
+            Ok(Vec::new())
+        },
+        Err(e) => Err(From::from(e))
+    }
+}
+
+fn write_to_file(file: &mut File, path: &Path, entries: &Vec<ArchiveEntry>) -> Result<(), WriteError> {
+    info!("Writing archive file {:?}", path);
+    try!(file.set_len(0));
+
+    let pos = try!(file.seek(io::SeekFrom::Start(0)));
+    assert_eq!(pos, 0);
+
+    try!(write_entries(file, entries));
+
+    Ok(())
 }
 
 /// reads a set of entries from a binary stream
