@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 use std::fs::{read_dir};
-use std::hash::Hasher;
 use std::os::unix::fs::MetadataExt;
 
 use conflict::Conflict;
@@ -17,6 +16,7 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
     let mut current_entries: FnvHashMap<PathBuf, Vec<CurrentEntryPerReplica>> = Default::default();
     let mut conflicts = ConflictList { list: Vec::new() };
     let mut stats = ConflictDetectionStatistics::new();
+    let mut read_directories = 0;
     for root in &config.roots {
         if !root.exists() {
             return Err(SyncError::RootDoesntExist(root.to_path_buf()))
@@ -39,8 +39,9 @@ pub fn find_conflicts<P: ProgressCallback>(archive: &archive::Archive, search: &
 
         // creates a list of all the different entries in the directory
         info!("Reading dir {:?}", directory);
-        progress_callback.reading_directory(&directory);
+        progress_callback.reading_directory(&directory, read_directories, search.directories.len());
 
+        read_directories += 1;
         current_entries.clear();
 
         // when looking at the contents of this search directory, we must check if the
@@ -253,14 +254,14 @@ impl ConflictDetectionStatistics {
 
 
 pub trait ProgressCallback {
-    fn reading_directory(&self, &Path);
-    fn analysing_entry(&self, &Path, usize, usize);
+    fn reading_directory(&self, path: &Path, checked: usize, remaining: usize);
+    fn analysing_entry(&self, path: &Path, i: usize, total_in_directory: usize);
 }
 
 pub struct NoProgress;
 
 impl ProgressCallback for NoProgress {
-    fn reading_directory(&self, _: &Path) {}
+    fn reading_directory(&self, _: &Path, _: usize, _: usize) {}
     fn analysing_entry(&self, _: &Path, _: usize, _: usize) {}
 }
 
@@ -277,13 +278,13 @@ fn are_archive_files_fresh(previous: &Vec<ArchiveEntryPerReplica>, current: &Vec
 /// checks if the path is on the ignore list
 fn is_ignored(replica: &SyncInfo, path: &Path) -> bool {
     for ignore in &replica.ignore_path {
-        trace!("{:?} starts with {:?} = {}", path, ignore, path.starts_with(ignore));
+        //trace!("{:?} starts with {:?} = {}", path, ignore, path.starts_with(ignore));
         if path.starts_with(ignore) {
             return true;
         }
     }
     for ignore in &replica.ignore_regex {
-        trace!("{:?} is match {:?} = {}", ignore, path.to_str().unwrap(), ignore.is_match(path.to_str().unwrap()));
+        //trace!("{:?} is match {:?} = {}", ignore, path.to_str().unwrap(), ignore.is_match(path.to_str().unwrap()));
         if ignore.is_match(path.to_str().unwrap()) {
             return true;
         }

@@ -2,7 +2,6 @@ use std::convert::From;
 use std::path::PathBuf;
 use regex::Regex;
 use std::path::Path;
-use std::os::unix::fs::DirEntryExt;
 use std::os::unix::fs::MetadataExt;
 
 pub type HashedPath = u64;

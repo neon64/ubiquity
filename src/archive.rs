@@ -1,12 +1,12 @@
 use std::io;
 use std::io::Seek;
 use std::convert::From;
-use std::hash::Hasher;
 use std::fs::{OpenOptions, File, create_dir_all, remove_file};
 use std::path::{Path, PathBuf};
 use bincode::serde::{serialize_into, deserialize_from, DeserializeError, SerializeError};
 use bincode::SizeLimit;
 use util::hash_single;
+use serde;
 use byteorder::{Error as ByteorderError, WriteBytesExt, ReadBytesExt, LittleEndian};
 use fs2::FileExt;
 
@@ -202,7 +202,7 @@ fn read_from_file(file: &mut File, path: &Path) -> Result<Vec<ArchiveEntry>, Rea
             error!("Invalid archive version {} for file {:?}", version, path);
             Ok(Vec::new())
         },
-        Err(ReadError::DeserializeError(DeserializeError::EndOfStreamError)) | Err(ReadError::ByteOrderError(ByteorderError::UnexpectedEOF)) => {
+        Err(ReadError::DeserializeError(DeserializeError::Serde(serde::de::value::Error::EndOfStream))) | Err(ReadError::ByteOrderError(ByteorderError::UnexpectedEOF)) => {
             error!("End of stream when reading archive file at path {:?}", path);
             Ok(Vec::new())
         },
