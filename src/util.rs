@@ -1,9 +1,9 @@
 use std::hash::{Hasher, Hash};
 use std::collections::HashMap;
-use std::hash::BuildHasherDefault;//hash_state::DefaultState;
+use std::hash::BuildHasherDefault;
 use fnv::FnvHasher;
 
-pub fn hash_single<T: Hash + ?Sized>(object: &T) -> u64 {
+pub fn hash_value<T: Hash + ?Sized>(object: &T) -> u64 {
     let mut hasher: FnvHasher = Default::default();
     object.hash(&mut hasher);
     hasher.finish()

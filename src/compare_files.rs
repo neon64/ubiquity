@@ -5,11 +5,11 @@ use std::process::Stdio;
 
 pub fn file_contents_equal_cmd(a: &Path, b: &Path) -> io::Result<bool> {
     debug!("Comparing {:?} with {:?}", a, b);
-    Ok(try!(Command::new("cmp")
+    Ok(Command::new("cmp")
              .stdout(Stdio::null())
              .arg(format!("{}", a.to_str().unwrap()))
              .arg(format!("{}", b.to_str().unwrap()))
-             .status()).code().unwrap() == 0)
+             .status()?.code().unwrap() == 0)
 }
 
 /*pub fn file_contents_equal(a: &Path, b: &Path) -> io::Result<bool> {

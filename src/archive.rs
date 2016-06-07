@@ -1,40 +1,58 @@
 use std::io;
 use std::io::Seek;
 use std::convert::From;
-use std::fs::{OpenOptions, File, create_dir_all, remove_file};
+use std::fs;
+use std::fmt;
+use std::collections::hash_map;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use bincode::serde::{serialize_into, deserialize_from, DeserializeError, SerializeError};
 use bincode::SizeLimit;
-use util::hash_single;
-use serde;
+use util::hash_value;
 use byteorder::{Error as ByteorderError, WriteBytesExt, ReadBytesExt, LittleEndian};
 use fs2::FileExt;
+use serde;
+use generic_array::{GenericArray};
 
-use state::{HashedPath, ArchiveEntry, ArchiveEntryPerReplica};
+use state::{ArchiveEntryPerReplica};
 use util::FnvHashMap;
+use config::ArchiveLen;
 
-const ARCHIVE_VERSION: u32 = 2;
+const ARCHIVE_VERSION: u32 = 3;
+
+pub type HashedPath = u64;
 
 #[derive(Debug, Serialize, Deserialize)]
+/// The `Archive` struct stores the state of the replicas after the last syncing operation.
+/// It is used to detect differences to replicas more quickly, and must be kept up to date after propagating changes.
 pub struct Archive {
     pub directory: PathBuf
 }
 
 impl Archive {
+    /// Initializes a directory at the provided path and gets ready to start reading/writing archive data.
     pub fn new(directory: PathBuf) -> Result<Self, io::Error> {
         // creates the archive directory
         if !directory.exists() {
-            try!(create_dir_all(&directory));
+            fs::create_dir_all(&directory)?;
         }
         Ok(Archive { directory: directory })
     }
 
-    /// Returns an `ArchiveFile` struct which abstracts over operations on a single archive file.
-    /// Remember each 'file' in the archive represents an entire directory (not recursive) in the replicas.
+    /// Constructs an `ArchiveFile` representing the entire `directory` in the replicas.
     pub fn for_directory(&self, directory: &Path) -> ArchiveFile {
-        let path = self.directory.join(hash_single(directory).to_string());
+        self.for_hashed_directory(Self::hash(directory))
+    }
+
+    /// Constructs an `ArchiveFile` from a hashed directory, representing an entire directory in the replicas.
+    pub fn for_hashed_directory(&self, directory: HashedPath) -> ArchiveFile {
+        let path = self.directory.join(directory.to_string());
 
         ArchiveFile::new(path)
+    }
+
+    pub fn hash(path: &Path) -> HashedPath {
+        hash_value(path)
     }
 }
 
@@ -42,67 +60,65 @@ impl Archive {
 /// Remember each 'file' in the archive represents an entire directory (not recursive) in the replicas.
 pub struct ArchiveFile {
     path: PathBuf,
-    file: Option<File>
+    file: Option<fs::File>
 }
 
 impl ArchiveFile {
 
     /// Creates a new wrapper around the given archive file.
-    pub fn new(path: PathBuf) -> ArchiveFile {
+    fn new(path: PathBuf) -> ArchiveFile {
         ArchiveFile { path: path, file: None }
     }
 
     /// Remove all entries from this file.
     /// This just slightly more efficient than writing an empty Vec.
-    pub fn remove_all(&self) -> Result<(), io::Error> {
+    pub fn remove_all(&mut self) -> Result<(), io::Error> {
         if self.path.exists() {
-            remove_file(self.path.clone())
-        } else {
-            Ok(())
+            debug!("Removing {} (because entries are empty)", self);
+            self.file = None;
+            fs::remove_file(&self.path)?;
         }
+        Ok(())
     }
 
     /// Reads the archive entries into a Vec
     /// This may acquire (or wait for) a lock,
     /// ensuring that multiple threads/processes aren't reading/writing to/from the same archive file.
-    pub fn read(&mut self) -> Result<Vec<ArchiveEntry>, ReadError> {
+    pub fn read<AL: ArchiveLen>(&mut self) -> Result<ArchiveEntries<AL>, ReadError> {
         if let Some(ref mut file) = self.file {
-            read_from_file(file, &self.path)
+            let data = read_from_file(file, &self.path)?;
+            Ok(ArchiveEntries::new(data))
         } else if self.path.exists()  {
-            let mut file = try!(self.open_file());
-            let res = read_from_file(&mut file, &self.path);
+            let mut file = self.open_file()?;
+            let res = read_from_file(&mut file, &self.path)?;
             self.file = Some(file);
-            res
+            Ok(ArchiveEntries::new(res))
         } else {
-            Ok(Vec::new()) // an empty set of entries
+            Ok(ArchiveEntries::empty()) // an empty set of entries
         }
     }
 
-    fn open_file(&self) -> Result<File, io::Error> {
-        let file = try!(OpenOptions::new().read(true).write(true).create(true).open(&self.path));
-        trace!("Acquiring shared lock for {:?}", self.path);
+    fn open_file(&self) -> Result<fs::File, io::Error> {
+        let file = fs::OpenOptions::new().read(true).write(true).create(true).open(&self.path)?;
+        trace!("Acquiring shared lock for {}", self);
         file.lock_exclusive().unwrap();
         trace!("Acquired lock");
         Ok(file)
     }
 
-    /// Writes a Vec of entries
-    pub fn write<I>(&mut self, entries: I) -> Result<(), WriteError> where I: Into<Vec<ArchiveEntry>> {
-        let entries = &mut entries.into();
-        remove_deleted_entries(entries);
+    /// Writes entries to disk
+    pub fn write<AL: ArchiveLen>(&mut self, entries: &mut ArchiveEntries<AL>) -> Result<(), WriteError> {
+        // prevents the archive sizes exploding
+        entries.prune_deleted();
+
+        let ref entries = entries.entries;
         if entries.is_empty() {
-            if self.path.exists() {
-                debug!("Removing archive file {:?} (because entries are empty)", self.path);
-                self.file = None;
-                try!(remove_file(self.path.clone()));
-            } else {
-                debug!("Tried to remove archive file {:?} (because entries are empty), but it doesn't exist ", self.path);
-            }
+            self.remove_all()?;
         } else if let Some(ref mut file) = self.file {
-            try!(write_to_file(file, &self.path, &entries));
+            write_to_file(file, &self.path, &entries)?;
         } else {
-            let mut file = try!(self.open_file());
-            try!(write_to_file(&mut file, &self.path, &entries));
+            let mut file = self.open_file()?;
+            write_to_file(&mut file, &self.path, &entries)?;
             self.file = Some(file);
         }
 
@@ -110,136 +126,151 @@ impl ArchiveFile {
     }
 }
 
+impl fmt::Display for ArchiveFile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Archive({})", self.path.file_name().unwrap().to_str().unwrap())
+    }
+}
+
 impl Drop for ArchiveFile {
     fn drop(&mut self) {
         if self.path.exists() {
-            let f = File::open(self.path.clone()).unwrap();
+            let f = fs::File::open(&self.path).unwrap();
             trace!("Unlocking archive file {:?}", self.path);
             f.unlock().unwrap();
             trace!("Unlocked");
         }
-        //self.lock.unlock().unwrap();
     }
 }
 
-#[derive(Debug)]
-pub struct ArchiveEntries {
-    entries: FnvHashMap<HashedPath, Vec<ArchiveEntryPerReplica>>,
-    pub dirty: bool
+type ArchiveEntryMap<AL: ArchiveLen> = FnvHashMap<HashedPath, GenericArray<ArchiveEntryPerReplica, AL>>;
+
+/// Stores all the archive entries for a specific directory
+pub struct ArchiveEntries<AL: ArchiveLen> {
+    entries: ArchiveEntryMap<AL>,
+    dirty: bool
 }
 
-impl From<Vec<ArchiveEntry>> for ArchiveEntries {
-    fn from(vec: Vec<ArchiveEntry>) -> ArchiveEntries {
-        let mut a = ArchiveEntries::empty();
-        for item in vec {
-            a.entries.insert(item.path_hash, item.replicas);
-        };
-        a
-    }
-}
-impl Into<Vec<ArchiveEntry>> for ArchiveEntries {
-    fn into(self) -> Vec<ArchiveEntry> {
-        self.to_vec()
+impl<AL: ArchiveLen> fmt::Debug for ArchiveEntries<AL> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        self.entries.fmt(formatter)
     }
 }
 
-impl ArchiveEntries {
-    fn empty() -> Self {
+impl<AL: ArchiveLen> ArchiveEntries<AL> {
+    pub fn empty() -> Self {
         ArchiveEntries {
             entries: Default::default(),
             dirty: false
         }
     }
 
-    pub fn to_vec(&self) -> Vec<ArchiveEntry> {
-        let mut entries_vec = Vec::new();
-        for (hash, info) in &self.entries {
-            entries_vec.push(ArchiveEntry::new(*hash, info.clone()));
+    fn new(entries: ArchiveEntryMap<AL>) -> Self {
+        ArchiveEntries {
+            entries: entries,
+            dirty: false
         }
-        entries_vec
     }
 
-    pub fn get(&self, path: &Path) -> Option<&Vec<ArchiveEntryPerReplica>> {
-        self.entries.get(&hash_single(path))
+    /// Returns an iterator over the entries.
+    pub fn iter(&self) -> hash_map::Iter<HashedPath, GenericArray<ArchiveEntryPerReplica, AL>> {
+        self.entries.iter()
     }
 
-    pub fn insert(&mut self, path: &Path, entries: Vec<ArchiveEntryPerReplica>) {
-        let hashed_path = hash_single(path);
+    pub fn get(&self, path: &Path) -> Option<&GenericArray<ArchiveEntryPerReplica, AL>> {
+        self.entries.get(&Archive::hash(path))
+    }
 
-        // this means we are potentially being inefficient
-        info!("Inserting data into archive for path {:?} (hashed: {})", path, hashed_path);
-        trace!("{:#?}", entries);
+    pub fn insert(&mut self, path: &Path, entries: GenericArray<ArchiveEntryPerReplica, AL>) {
+        let hashed_path = Archive::hash(path);
         self.entries.insert(hashed_path, entries);
         self.dirty = true;
     }
+
+    // Loops through each ArchiveEntry and removes it if all replicas are empty.
+    // Without this archive sizes will probably explode if enough files are created,
+    // synced and then deleted.
+    pub fn prune_deleted(&mut self) {
+        let empties: Vec<_> = self.entries
+            .iter()
+            .filter(|&(_, ref entry)| {
+               let mut delete = true;
+                for replica in entry.iter() {
+                    match replica {
+                        &ArchiveEntryPerReplica::Empty => {},
+                        _ => { delete = false }
+                    }
+                }
+
+                if delete {
+                    info!("Removing empty entry before writing");
+                }
+                delete
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        for empty in empties { self.entries.remove(&empty); }
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
 }
 
-// Loops through each ArchiveEntry and removes it if all replicas are empty.
-// Without this archive sizes will probably explode.
-fn remove_deleted_entries(entries: &mut Vec<ArchiveEntry>) {
-    entries.retain(|entry| {
-        let mut keep = false;
-        for replica in &entry.replicas {
-            match replica {
-                &ArchiveEntryPerReplica::Empty => {},
-                _ => { keep = true }
-            }
-        }
-
-        if !keep {
-            info!("Removing empty entry before writing to archive");
-        }
-        keep
-    });
-}
-
-fn read_from_file(file: &mut File, path: &Path) -> Result<Vec<ArchiveEntry>, ReadError> {
+fn read_from_file<AL: ArchiveLen>(file: &mut fs::File, path: &Path) -> Result<ArchiveEntryMap<AL>, ReadError> {
     debug!("Reading archive file {:?}", path);
-    try!(file.seek(io::SeekFrom::Start(0)));
+    file.seek(io::SeekFrom::Start(0))?;
     match read_entries(file) {
         Ok(i) => Ok(i),
         Err(ReadError::InvalidArchiveVersion(version)) => {
             error!("Invalid archive version {} for file {:?}", version, path);
-            Ok(Vec::new())
+            Ok(Default::default())
         },
         Err(ReadError::DeserializeError(DeserializeError::Serde(serde::de::value::Error::EndOfStream))) | Err(ReadError::ByteOrderError(ByteorderError::UnexpectedEOF)) => {
             error!("End of stream when reading archive file at path {:?}", path);
-            Ok(Vec::new())
+            Ok(Default::default())
         },
         Err(e) => Err(From::from(e))
     }
 }
 
-fn write_to_file(file: &mut File, path: &Path, entries: &Vec<ArchiveEntry>) -> Result<(), WriteError> {
-    info!("Writing archive file {:?}", path);
-    try!(file.set_len(0));
+fn write_to_file<AL: ArchiveLen>(file: &mut fs::File, path: &Path, entries: &ArchiveEntryMap<AL>) -> Result<(), WriteError> {
+    info!("Writing to archive file {:?}: {:#?}", path, entries);
+    file.set_len(0)?;
 
-    let pos = try!(file.seek(io::SeekFrom::Start(0)));
+    let pos = file.seek(io::SeekFrom::Start(0))?;
     assert_eq!(pos, 0);
 
-    try!(write_entries(file, entries));
+    write_entries(file, entries)?;
 
     Ok(())
 }
 
 /// reads a set of entries from a binary stream
-fn read_entries<R: io::Read>(read: &mut R) -> Result<Vec<ArchiveEntry>, ReadError> {
-    let version = try!(read.read_u32::<LittleEndian>());
+fn read_entries<R: io::Read, AL: ArchiveLen>(read: &mut R) -> Result<ArchiveEntryMap<AL>, ReadError> {
+    let version = read.read_u32::<LittleEndian>()?;
     if version != ARCHIVE_VERSION {
         return Err(ReadError::InvalidArchiveVersion(version))
     }
-    let result = try!(deserialize_from(read, SizeLimit::Infinite));
-    Ok(result)
+    let result: HashMap<HashedPath, Vec<ArchiveEntryPerReplica>> = deserialize_from(read, SizeLimit::Infinite)?;
+    let converted = result.iter()
+        .map(|(key, value)| (*key, GenericArray::from_slice(&value)))
+        .collect::<ArchiveEntryMap<AL>>();
+    Ok(converted)
 }
 
 // writes a set of entries to a binary stream
-fn write_entries<W: io::Write>(out: &mut W, entries: &Vec<ArchiveEntry>) -> Result<(), WriteError> {
-    try!(out.write_u32::<LittleEndian>(ARCHIVE_VERSION));
-    try!(serialize_into(out, entries, SizeLimit::Infinite));
+fn write_entries<W: io::Write, AL: ArchiveLen>(out: &mut W, entries: &ArchiveEntryMap<AL>) -> Result<(), WriteError> {
+    let converted: HashMap<HashedPath, Vec<ArchiveEntryPerReplica>> = entries.iter()
+        .map(|(key, value)| (*key, value.to_vec()))
+        .collect();
+    out.write_u32::<LittleEndian>(ARCHIVE_VERSION)?;
+    serialize_into(out, &converted, SizeLimit::Infinite)?;
     Ok(())
 }
 
 #[derive(Debug)]
+/// Various errors explaining why an archive file couldn't be read
 pub enum ReadError {
     InvalidArchiveVersion(u32),
     IoError(io::Error),
@@ -266,6 +297,7 @@ impl From<ByteorderError> for ReadError {
 }
 
 #[derive(Debug)]
+/// Various errors explaining why an archive file couldn't be written to
 pub enum WriteError {
     IoError(io::Error),
     ByteOrderError(ByteorderError),

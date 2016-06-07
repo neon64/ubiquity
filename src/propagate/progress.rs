@@ -1,27 +1,30 @@
 use std::io::BufRead;
 use std::io;
 
-pub trait Callback {
+/// Handles progress updates for the propagation step.
+pub trait ProgressCallback {
     /// Transfer progress from rsync
     fn rsync_progress(&self, transferred_bytes: usize, progress: u8, speed: &str, elapsed_time: &str, transferred: Option<u32>, to_check: Option<ToCheck>);
 }
 
-pub struct NoProgress;
+/// A zero-sized struct with an empty implementation of ProgressCallback
+pub struct EmptyProgressCallback;
 
-impl Callback for NoProgress {
+impl ProgressCallback for EmptyProgressCallback {
     fn rsync_progress(&self, _: usize, _: u8, _: &str, _: &str, _: Option<u32>, _: Option<ToCheck>) {}
 }
 
 #[derive(Debug)]
+/// The amount of files left to check.
 pub struct ToCheck {
     pub remaining: u32,
     pub total: u32
 }
 
-pub fn parse_from_stdout<B: BufRead, P: Callback>(reader: B, progress: &P) -> io::Result<()> {
+pub fn parse_from_stdout<B: BufRead, P: ProgressCallback>(reader: B, progress: &P) -> io::Result<()> {
     // blocks until subrocess finishes
     for text in reader.split('\r' as u8) {
-        let text = try!(text);
+        let text = text?;
         let text = String::from_utf8(text).unwrap();
 
         if text == "" {

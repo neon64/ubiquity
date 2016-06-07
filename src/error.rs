@@ -5,6 +5,7 @@ use std::fmt;
 use walkdir::Error as WalkDirError;
 
 #[derive(Debug)]
+/// The many causes for an error during the synchronization process
 pub enum SyncError {
     PathModified(PathBuf),
     IoError(io::Error, Option<String>),

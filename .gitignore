@@ -1,7 +1,6 @@
+.DS_Store
 target
 Cargo.lock
 ubiquity.iml
-tests/root_a
-tests/archive
-tests/root_b
+tests/replicas
 .idea

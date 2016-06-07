@@ -1,114 +1,126 @@
-#![feature(plugin)]
+
+#![feature(question_mark)]
 
 extern crate env_logger;
 extern crate ubiquity;
 extern crate regex;
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate generic_array;
+extern crate typenum;
+
+use typenum::U2;
 
 use regex::Regex;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
 use std::io;
 use std::io::Write;
 
-use ubiquity::state::SyncInfo;
-use ubiquity::conflict::{detect, resolve};
-use ubiquity::transfer;
+use ubiquity::config::*;
+use ubiquity::detect;
+use ubiquity::reconcile;
+use ubiquity::propagate;
 use ubiquity::archive::Archive;
 
-fn set_up() -> (Archive, SyncInfo) {
+fn set_up(name: &'static str) -> (Archive, SyncInfo) {
     let _ = env_logger::init();
 
-    let archive = Archive::new(Path::new("tests/archive").to_path_buf()).unwrap();
+    let archive_path = PathBuf::from(format!("tests/replicas/{}/archive", name));
+    let a_path = PathBuf::from(format!("tests/replicas/{}/a", name));
+    let b_path = PathBuf::from(format!("tests/replicas/{}/b", name));
 
-    let config = SyncInfo {
-        roots: vec![Path::new("tests/root_a").to_path_buf(), Path::new("tests/root_b").to_path_buf()],
-        ignore_regex: vec![],
-        ignore_path: vec![],
-        compare_file_contents: true
-    };
+    clean_directory(&archive_path).unwrap();
+    clean_directory(&a_path).unwrap();
+    clean_directory(&b_path).unwrap();
 
-    clean_directory(Path::new("tests/archive")).unwrap();
-    clean_directory(Path::new("tests/root_a")).unwrap();
-    clean_directory(Path::new("tests/root_b")).unwrap();
+    let config = SyncInfo::new(arr![PathBuf; a_path, b_path]);
+
+    let archive = Archive::new(archive_path).unwrap();
 
     return (archive, config)
 }
 
 #[test]
-fn test_conflicts_are_empty() {
-    let (archive, config) = set_up();
+fn test_differences_are_empty() {
+    let (archive, config) = set_up("differences_are_empty");
 
-    let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
-    assert!(conflicts.is_empty());
+    let result = detect::find_updates::<U2, U2, _>(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::EmptyProgressCallback).unwrap();
+    assert!(result.differences.is_empty());
 }
 
 #[test]
 fn test_files_are_ignored() {
-    let (archive, mut config) = set_up();
-    config.ignore_regex.push(Regex::new(r"foo").unwrap());
-    config.ignore_path.push("baz".to_owned());
+    let (archive, mut config) = set_up("files_are_ignored");
+    config.ignore.regexes.push(Regex::new(r"foo").unwrap());
+    config.ignore.paths.push("baz".to_owned());
 
-    fs::File::create("tests/root_a/foo").unwrap();
-    fs::File::create("tests/root_a/something_contains_foo").unwrap();
-    fs::create_dir("tests/root_a/baz").unwrap();
+    fs::File::create(config.roots[0].join("foo")).unwrap();
+    fs::File::create(config.roots[0].join("something_contains_foo")).unwrap();
+    fs::create_dir(config.roots[0].join("baz")).unwrap();
 
-    let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
-    assert!(conflicts.is_empty());
+    let result = detect::find_updates(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::EmptyProgressCallback).unwrap();
+    assert!(result.differences.is_empty());
 }
 
 #[test]
 fn test_changes_are_detected() {
-    let (archive, config) = set_up();
+    let (archive, config) = set_up("changes_are_detected");
 
-    let mut test_document = fs::File::create("tests/root_b/Test Document").unwrap();
+    let mut test_document = fs::File::create(config.roots[1].join("Test Document")).unwrap();
     write!(test_document, "Hello World").unwrap();
 
-    let (conflicts, _) = detect::find_conflicts(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::NoProgress).unwrap();
-    assert_eq!(conflicts.len(), 1);
-    assert_eq!(&conflicts[0].path, Path::new("Test Document"));
+    let result = detect::find_updates(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::EmptyProgressCallback).unwrap();
+    assert_eq!(result.differences.len(), 1);
+    assert_eq!(&result.differences[0].path, Path::new("Test Document"));
 }
 
 #[test]
-fn test_nested_conflicts_are_removed() {
-    let (archive, config) = set_up();
+fn test_nested_differences_are_removed() {
+    let (archive, config) = set_up("nested_differences_are_removed");
 
-    fs::create_dir("tests/root_a/baz").unwrap();
-    fs::create_dir("tests/root_a/baz/qux").unwrap();
-    fs::File::create("tests/root_a/baz/qux/cub").unwrap();
+    fs::create_dir(config.roots[0].join("baz")).unwrap();
+    fs::create_dir(config.roots[0].join("baz/qux")).unwrap();
+    fs::File::create(config.roots[0].join("baz/qux/cub")).unwrap();
 
     let mut sd = detect::SearchDirectories::new(vec![Path::new("baz").into(), Path::new("baz/qux").into()], false);
 
-    let (conflicts, _) = detect::find_conflicts(&archive, &mut sd, &config, &detect::NoProgress).unwrap();
-    assert_eq!(conflicts.len(), 1);
-    assert_eq!(&conflicts[0].path, Path::new("baz"));
+    let result = detect::find_updates(&archive, &mut sd, &config, &detect::EmptyProgressCallback).unwrap();
+    assert_eq!(result.differences.len(), 1);
+    assert_eq!(&result.differences[0].path, Path::new("baz"));
 }
 
 #[test]
-fn test_conflicts_are_resolved() {
-    let (archive, config) = set_up();
+fn test_differences_are_resolved() {
+    let (archive, config) = set_up("differences_are_resolved");
     let ref sd = detect::SearchDirectories::from_root();
 
     detect_and_resolve(&archive, &config, sd);
 
     // test creations
-    fs::create_dir("tests/root_a/baz").unwrap();
-    fs::File::create("tests/root_a/baz/cub").unwrap();
+    fs::create_dir(config.roots[0].join("baz")).unwrap();
+    fs::File::create(config.roots[0].join("baz/cub")).unwrap();
 
+    info!("Testing after dir created");
     detect_and_resolve(&archive, &config, sd);
 
-    let (conflicts, _) = detect::find_conflicts(&archive, &mut sd.clone(), &config, &detect::NoProgress).unwrap();
-    assert_eq!(conflicts.len(), 0);
+    info!("Checking replicas are in sync");
+    let result = detect::find_updates(&archive, &mut sd.clone(), &config, &detect::EmptyProgressCallback).unwrap();
+    assert_eq!(result.statistics.archive_additions, 0);
+    assert_eq!(result.differences.len(), 0);
 
     // test deletions
-    fs::remove_dir_all("tests/root_a/baz").unwrap();
+    fs::remove_dir_all(config.roots[1].join("baz")).unwrap();
 
+    info!("Testing after dir removed");
     detect_and_resolve(&archive, &config, sd);
 
-    let (conflicts, _) = detect::find_conflicts(&archive, &mut sd.clone(), &config, &detect::NoProgress).unwrap();
-    assert_eq!(conflicts.len(), 0);
+    info!("Checking replicas are in sync");
+    let result = detect::find_updates(&archive, &mut sd.clone(), &config, &detect::EmptyProgressCallback).unwrap();
+    assert_eq!(result.differences.len(), 0);
+    assert_eq!(result.statistics.archive_additions, 0);
 }
 
 #[test]
@@ -118,30 +130,30 @@ fn test_regex_forward_slash() {
     assert!(!r.is_match("/Users/bob/awesome/target"));
 }
 
-fn detect_and_resolve(archive: &Archive, config: &SyncInfo, search_directories: &detect::SearchDirectories) {
-    let (conflicts, _) = detect::find_conflicts(archive, &mut search_directories.clone(), config, &detect::NoProgress).unwrap();
+fn detect_and_resolve(archive: &Archive, config: &SyncInfo<U2, U2>, search_directories: &detect::SearchDirectories) {
+    let result = detect::find_updates(archive, &mut search_directories.clone(), config, &detect::EmptyProgressCallback).unwrap();
 
-    info!("{} conflicts", conflicts.len());
-    for conflict in conflicts {
-        let resolution = resolve::guess(&conflict);
-        info!("Conflict {:?} (resolving using {:?})", conflict.path, resolution);
-        if let Some(master) = resolution {
-            transfer::resolve_conflict(&conflict, master, &archive, &Default::default()).unwrap();
+    info!("{} differences", result.differences.len());
+    for difference in result.differences {
+        let operation = reconcile::guess_operation(&difference);
+        info!("difference {:?}: {:?}", difference.path, operation);
+        if let reconcile::Operation::PropagateFromMaster(master) = operation {
+            propagate::propagate(&difference, master, &archive, &propagate::DefaultPropagationOptions, &propagate::EmptyProgressCallback).unwrap();
         }
     }
 }
 
 fn clean_directory(p: &Path) -> io::Result<()> {
     if !p.exists() {
-        try!(fs::create_dir(p));
+        fs::create_dir_all(p)?;
         return Ok(());
     }
-    for entry in try!(fs::read_dir(p)) {
-        let entry = try!(entry);
-        if try!(entry.metadata()).is_dir() {
-            try!(fs::remove_dir_all(entry.path()));
+    for entry in fs::read_dir(p)? {
+        let entry = entry?;
+        if entry.metadata()?.is_dir() {
+            fs::remove_dir_all(entry.path())?;
         } else {
-            try!(fs::remove_file(entry.path()));
+            fs::remove_file(entry.path())?;
         }
     }
     Ok(())

@@ -1,29 +1,12 @@
 use std::convert::From;
-use std::path::PathBuf;
-use regex::Regex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
+use generic_array::GenericArray;
 
-pub type HashedPath = u64;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArchiveEntry {
-    pub path_hash: HashedPath,
-    //pub path: String,
-    pub replicas: Vec<ArchiveEntryPerReplica>
-}
-
-impl ArchiveEntry {
-    pub fn new(path_hash: HashedPath, replicas: Vec<ArchiveEntryPerReplica>) -> ArchiveEntry {
-        ArchiveEntry {
-            //path: path,
-            path_hash: path_hash,
-            replicas: replicas
-        }
-    }
-}
+use config::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Mirrors the state of a path on the filesystem.
 pub enum ArchiveEntryPerReplica {
     Empty,
     Directory(ArchiveEntryExists),
@@ -32,6 +15,12 @@ pub enum ArchiveEntryPerReplica {
 }
 
 impl ArchiveEntryPerReplica {
+    /// Creates an array of ArchiveEntryPerReplica instances that reflect the current state of `path` inside `roots`.
+    pub fn from_roots<AL: ArchiveLen>(roots: &[PathBuf], path: &Path) -> GenericArray<ArchiveEntryPerReplica, AL> {
+        GenericArray::map_slice(roots, |root: &PathBuf| ArchiveEntryPerReplica::from(root.join(path).as_ref()))
+    }
+
+    /// Returns true if the entries are equal in type but not necessarily in content.
     pub fn equal_ty(a: &ArchiveEntryPerReplica, b: &ArchiveEntryPerReplica) -> bool {
         match *a {
             ArchiveEntryPerReplica::Empty => match *b {
@@ -53,6 +42,7 @@ impl ArchiveEntryPerReplica {
         }
     }
 
+    /// Returns true if the entry is a file or a symlink
     pub fn is_file_or_symlink(&self) -> bool {
         match *self {
             ArchiveEntryPerReplica::File(_) | ArchiveEntryPerReplica::Symlink(_) => true,
@@ -60,6 +50,7 @@ impl ArchiveEntryPerReplica {
         }
     }
 
+    /// Returns true if the entry is present (ie: it is not empty)
     pub fn entry_exists(&self) -> bool {
         match *self {
             ArchiveEntryPerReplica::Empty => false,
@@ -96,37 +87,4 @@ impl<'a> From<&'a Path> for ArchiveEntryPerReplica {
 pub struct ArchiveEntryExists {
     ino: u64,
     ctime: i64
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-/// Just like `ArchiveEntryPerReplica`, but it contains information about the current path on the filesystem.
-pub struct CurrentEntryPerReplica {
-    pub path: PathBuf,
-    pub archive: ArchiveEntryPerReplica
-}
-
-impl CurrentEntryPerReplica {
-    pub fn has_been_modified(&self) -> bool {
-        self.archive != ArchiveEntryPerReplica::from(&*self.path)
-    }
-}
-
-/// The configuration for the sync business.
-#[derive(Debug)]
-pub struct SyncInfo {
-    pub roots: Vec<PathBuf>,
-    pub ignore_regex: Vec<Regex>,
-    pub ignore_path: Vec<String>,
-    pub compare_file_contents: bool
-}
-
-impl SyncInfo {
-    pub fn new() -> Self {
-        SyncInfo {
-            roots: Vec::new(),
-            ignore_regex: Vec::new(),
-            ignore_path: Vec::new(),
-            compare_file_contents: true
-        }
-    }
 }

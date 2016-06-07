@@ -2,6 +2,9 @@
 name = "ubiquity"
 version = "0.1.0"
 authors = ["Chris Chamberlain <c.chamberlain@iinet.net.au>"]
+description = "n-directional file synchronization utility"
+repository = "https://github.com/neon64/ubiquity"
+readme = "README.md"
 
 [dependencies]
 fnv = "*"
@@ -11,10 +14,11 @@ serde_macros = "*"
 byteorder = "0.4"
 log = "*"
 regex = "*"
-term = "*"
 fs2 = "0.2.2"
 #file-lock = { version = "0.0.17", features = ["unstable"] }
 walkdir = "0.1.5"
+generic-array = "0.3.0"
+typenum = "*"
 
 [dev_dependencies]
 env_logger = "*"
