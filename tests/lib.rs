@@ -47,7 +47,7 @@ fn set_up(name: &'static str) -> (Archive, SyncInfo) {
 fn test_differences_are_empty() {
     let (archive, config) = set_up("differences_are_empty");
 
-    let result = detect::find_updates::<U2, U2, _>(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::EmptyProgressCallback).unwrap();
+    let result = detect::find_updates(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::EmptyProgressCallback).unwrap();
     assert!(result.differences.is_empty());
 }
 
