@@ -1,22 +1,32 @@
 # Ubiquity
 
-Ubiquity is a new file syncing *library* written in Rust. It is loosely inspired by Unison, another great sync utility, but it is designed to be driven by another program (for example a GUI app) instead of the console.
+Ubiquity is a new file syncing *library* written in Rust. It is loosely inspired by [Unison](https://www.cis.upenn.edu/~bcpierce/unison/), another great sync utility, but it is designed first and foremost as a library not a command line utility, and it also handles an unlimited number of replicas.
 
-### Differences from Unison
+## Features
 
-- Ubiquity can sync any number of replicas, not just 2
-- Ubiquity can be easily run as a library, and has a smaller and simpler codebase
-- Ubiquity's archive format is a number of small files inside a folder, whereas Unison's is one big file.
-- Ubiquity is a hobby project and may break at any time.
+- Unlimited number of replicas
+- Configurable update detection that could be powered by a file system watcher (eg: kqueue on Linux or FSEvents on OS X)
+- Runs as a library inside another application, and has a clean API.
+- Caches filesystem state in 'archive directory', speeding up subsequent sync operations.
 
-- Unison handles network syncing, Windows support etc.
-- Unison is battle-tested and its operation been mathematically verified (I think)
+## Drawbacks
+
+It would be unfair to claim that Ubiquity is suitable for every task, as after a few weekends of work it is far from battle-tested.
+
+- Requires nightly Rust!
+    + It uses `serde_macros` to generate serialization/deserialization code for archives
+    + It (as of recently) uses the question mark operator to make the code cleaner
+- Test coverage is not great
+    + The basics are there, and I use it to keep my own files in sync.
+    + However lesser used code paths might be buggy.
+- It might not handle symlinks
+    + Some code paths in the `ubiqiuity::propagate` module are `unimplemented!()`, because I haven't used symlinks enough inside replicas to really need explicit 'support'.
+- Change propagation is not atomic
 
 ## Basic Operation
 
-Ubiquity works in a very decoupled manner.
-First you call `ubiquity::detect::find_updates` with a few of arguments
-which tell Ubiquity where to look for changed files. It will return a list of files that differ between replicas.
+The syncing process consists of three stages.
+First `ubiquity::detect::find_updates` is called with arguments which tell Ubiquity where to look for changed files. That function returns a list of files that differ between replicas.
 
 You can do whatever you like with that list, but most often you want to resolve those differences.
 You can use an algorithm, user input, or a hardcoded value to determine which replica is the 'master' replica for each difference.

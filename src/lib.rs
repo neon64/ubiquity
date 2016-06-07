@@ -1,4 +1,4 @@
-//! Ubiquity works in a very decoupled manner.
+//! The syncing process consists of three stages.
 //! First you call `ubiquity::detect::find_updates` with a few of arguments
 //! which tell Ubiquity where to look for changed files. It will return a list of files that differ between replicas.
 //!
