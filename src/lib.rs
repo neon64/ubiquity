@@ -21,14 +21,20 @@
 //! use std::path::{Path, PathBuf};
 //! use std::fs;
 //! use ubiquity::{archive, detect, reconcile, propagate};
-//! use ubiquity::config::{SyncInfo, Ignore};
+//! use ubiquity::config::{SyncInfo};
 //! use regex::Regex;
 //!
 //! fn main() {
 //!     let archive = archive::Archive::new(Path::new("tests/replicas/archives").to_path_buf()).unwrap();
 //!
-//!     fs::create_dir(Path::new("tests/replicas/path_a")).unwrap();
-//!     fs::create_dir(Path::new("tests/replicas/path_b")).unwrap();
+//!     let a = Path::new("tests/replicas/path_a");
+//!     let b = Path::new("tests/replicas/path_b");
+//!     if !a.is_dir() {
+//!         fs::create_dir(a).unwrap();
+//!     }
+//!     if !b.is_dir() {
+//!         fs::create_dir(b).unwrap();
+//!     }
 //!
 //!     let mut config: SyncInfo = SyncInfo::new(arr![PathBuf; PathBuf::from("tests/replicas/path_a"), PathBuf::from("tests/replicas/path_b")]);
 //!     config.ignore.regexes.push(Regex::new(r".DS_Store").unwrap());
@@ -43,7 +49,7 @@
 //!     }
 //!
 //!     for difference in result.differences {
-//!         let mut operation = reconcile::guess_operation(&difference);
+//!         let operation = reconcile::guess_operation(&difference);
 //!         println!("Difference at {:?}, resolving using {:?}", difference.path, operation);
 //!         if let reconcile::Operation::PropagateFromMaster(master) = operation {
 //!             propagate::propagate(&difference, master, &archive, &propagate::DefaultPropagationOptions, &propagate::EmptyProgressCallback).unwrap();

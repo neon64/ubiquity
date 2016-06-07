@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use bincode::serde::{serialize_into, deserialize_from, DeserializeError, SerializeError};
 use bincode::SizeLimit;
 use util::hash_value;
-use byteorder::{Error as ByteorderError, WriteBytesExt, ReadBytesExt, LittleEndian};
+use byteorder::{WriteBytesExt, ReadBytesExt, LittleEndian};
 use fs2::FileExt;
 use serde;
 use generic_array::{GenericArray};
@@ -226,7 +226,7 @@ fn read_from_file<AL: ArchiveLen>(file: &mut fs::File, path: &Path) -> Result<Ar
             error!("Invalid archive version {} for file {:?}", version, path);
             Ok(Default::default())
         },
-        Err(ReadError::DeserializeError(DeserializeError::Serde(serde::de::value::Error::EndOfStream))) | Err(ReadError::ByteOrderError(ByteorderError::UnexpectedEOF)) => {
+        Err(ReadError::DeserializeError(DeserializeError::Serde(serde::de::value::Error::EndOfStream))) => {
             error!("End of stream when reading archive file at path {:?}", path);
             Ok(Default::default())
         },
@@ -274,7 +274,6 @@ fn write_entries<W: io::Write, AL: ArchiveLen>(out: &mut W, entries: &ArchiveEnt
 pub enum ReadError {
     InvalidArchiveVersion(u32),
     IoError(io::Error),
-    ByteOrderError(ByteorderError),
     DeserializeError(DeserializeError)
 }
 
@@ -290,17 +289,10 @@ impl From<io::Error> for ReadError {
     }
 }
 
-impl From<ByteorderError> for ReadError {
-    fn from(e: ByteorderError) -> Self {
-        ReadError::ByteOrderError(e)
-    }
-}
-
 #[derive(Debug)]
 /// Various errors explaining why an archive file couldn't be written to
 pub enum WriteError {
     IoError(io::Error),
-    ByteOrderError(ByteorderError),
     SerializeError(SerializeError)
 }
 
@@ -313,11 +305,5 @@ impl From<SerializeError> for WriteError {
 impl From<io::Error> for WriteError {
     fn from(e: io::Error) -> Self {
         WriteError::IoError(e)
-    }
-}
-
-impl From<ByteorderError> for WriteError {
-    fn from(e: ByteorderError) -> Self {
-        WriteError::ByteOrderError(e)
     }
 }
