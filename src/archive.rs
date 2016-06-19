@@ -4,7 +4,6 @@ use std::convert::From;
 use std::fs;
 use std::fmt;
 use std::collections::hash_map;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use bincode::serde::{serialize_into, deserialize_from, DeserializeError, SerializeError};
 use bincode::SizeLimit;
@@ -252,20 +251,14 @@ fn read_entries<R: io::Read, AL: ArchiveLen>(read: &mut R) -> Result<ArchiveEntr
     if version != ARCHIVE_VERSION {
         return Err(ReadError::InvalidArchiveVersion(version))
     }
-    let result: HashMap<HashedPath, Vec<ArchiveEntryPerReplica>> = deserialize_from(read, SizeLimit::Infinite)?;
-    let converted = result.iter()
-        .map(|(key, value)| (*key, GenericArray::from_slice(&value)))
-        .collect::<ArchiveEntryMap<AL>>();
-    Ok(converted)
+    let result = deserialize_from(read, SizeLimit::Infinite)?;
+    Ok(result)
 }
 
 // writes a set of entries to a binary stream
 fn write_entries<W: io::Write, AL: ArchiveLen>(out: &mut W, entries: &ArchiveEntryMap<AL>) -> Result<(), WriteError> {
-    let converted: HashMap<HashedPath, Vec<ArchiveEntryPerReplica>> = entries.iter()
-        .map(|(key, value)| (*key, value.to_vec()))
-        .collect();
     out.write_u32::<LittleEndian>(ARCHIVE_VERSION)?;
-    serialize_into(out, &converted, SizeLimit::Infinite)?;
+    serialize_into(out, &entries, SizeLimit::Infinite)?;
     Ok(())
 }
 

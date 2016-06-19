@@ -72,29 +72,6 @@ pub fn propagate<T, P, PL, AL>(
     Ok(())
 }
 
-/// Information required to update an entry in the archive.
-/*struct ArchiveUpdateInfo<'a, PL: PathLen + 'a, AL: ArchiveLen> {
-    archive: &'a Archive,
-    roots: &'a GenericArray<PathBuf, PL>,
-    path: Cow<'a, Path>,
-    al: PhantomData<AL>
-}
-
-impl<'a, PL: PathLen, AL: ArchiveLen> ArchiveUpdateInfo<'a, PL, AL> {
-    fn new<I>(path: I, roots: &'a GenericArray<PathBuf, PL>, archive: &'a Archive) -> Self where I: Into<Cow<'a, Path>> {
-        ArchiveUpdateInfo {
-            archive: archive,
-            roots: roots,
-            path: path.into(),
-            al: PhantomData::<AL>
-        }
-    }
-
-    fn for_child(&self, child: &OsStr) -> Self {
-        ArchiveUpdateInfo::new(self.path.join(child.clone()), self.roots, self.archive)
-    }
-}*/
-
 fn remove_file<T>(path: &Path, options: &T) -> Result<(), SyncError> where T: PropagationOptions {
     if !options.should_remove(path) {
         return Err(SyncError::Cancelled);
@@ -113,22 +90,6 @@ fn remove_directory_recursive<T>(path: &Path, options: &T) -> Result<(), SyncErr
     info!("Removing directory {:?}", path);
     // delegate the actual removal to a callback function
     options.remove_dir_all(path)
-
-    /*debug!("Removing archive files for contents of {:?}", path);
-    for entry in WalkDir::new(path) {
-        let entry = entry?;
-        if entry.metadata()?.is_dir() {
-            let child_path = archive_update.path.join(entry.path().strip_prefix(path).unwrap().as_os_str());
-            let archive = archive_update.archive.for_directory(&child_path);
-            archive.remove_all()?;
-        }
-    }*/
-
-    //debug!("Removing archive file for directory {:?}", path);
-    //archive_update.archive.for_directory(&archive_update.path).remove_all()?;
-
-
-    //update_archive(archive_update)
 }
 
 fn transfer_file<P>(source: &Path, dest: &Path, progress: &P) -> Result<(), SyncError> where P: ProgressCallback {
