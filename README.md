@@ -36,7 +36,7 @@ Ubiquity comes with the `ubiquity::reconcile::guess_operation` function which wi
 
 Once you have the 'master' replica, you can propagate changes using `ubiquity::propagate::propagate`.
 
-```
+```rust
 extern crate ubiquity;
 extern crate regex;
 extern crate typenum;
