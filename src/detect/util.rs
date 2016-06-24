@@ -6,7 +6,8 @@ use generic_array::{GenericArray};
 use error::SyncError;
 use util::FnvHashMap;
 use state::ArchiveEntryPerReplica;
-use config::*;
+use NumRoots;
+use config::{SyncInfo, Ignore};
 
 pub fn check_all_roots_exist<'a, I: Iterator<Item = &'a PathBuf>>(roots: I) -> Result<(), SyncError> {
     for root in roots {
@@ -18,7 +19,7 @@ pub fn check_all_roots_exist<'a, I: Iterator<Item = &'a PathBuf>>(roots: I) -> R
 }
 
 /// checks that all the archive files for this path are identical
-pub fn are_archive_files_identical<AL: ArchiveLen>(a: &GenericArray<ArchiveEntryPerReplica, AL>, b: &GenericArray<ArchiveEntryPerReplica, AL>) -> bool {
+pub fn are_archive_files_identical<N: NumRoots>(a: &GenericArray<ArchiveEntryPerReplica, N>, b: &GenericArray<ArchiveEntryPerReplica, N>) -> bool {
     for (a, b) in a.iter().zip(b.iter()) {
         if a != b {
             return false;
@@ -44,7 +45,7 @@ pub fn is_ignored(ignore: &Ignore, path: &Path) -> bool {
     return false;
 }
 
-pub fn scan_directory_contents<PL: PathLen, AL: ArchiveLen>(directory: &Path, current_entries: &mut FnvHashMap<PathBuf, GenericArray<ArchiveEntryPerReplica, AL>>, config: &SyncInfo<PL, AL>) -> Result<(), SyncError> {
+pub fn scan_directory_contents<N>(directory: &Path, current_entries: &mut FnvHashMap<PathBuf, GenericArray<ArchiveEntryPerReplica, N>>, config: &SyncInfo<N>) -> Result<(), SyncError> where N: NumRoots {
     // when looking at the contents of this search directory, we must check if the
     // search directory itself is present across. if it is, then we will add it to the list
     // of paths to check.

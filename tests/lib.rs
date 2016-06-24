@@ -130,7 +130,7 @@ fn test_regex_forward_slash() {
     assert!(!r.is_match("/Users/bob/awesome/target"));
 }
 
-fn detect_and_resolve(archive: &Archive, config: &SyncInfo<U2, U2>, search_directories: &detect::SearchDirectories) {
+fn detect_and_resolve(archive: &Archive, config: &SyncInfo<U2>, search_directories: &detect::SearchDirectories) {
     let result = detect::find_updates(archive, &mut search_directories.clone(), config, &detect::EmptyProgressCallback).unwrap();
 
     info!("{} differences", result.differences.len());

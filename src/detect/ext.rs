@@ -5,13 +5,13 @@ use generic_array::{GenericArray};
 use state::ArchiveEntryPerReplica;
 use error::SyncError;
 use compare_files::file_contents_equal_cmd;
-use config::*;
+use NumRoots;
 
-pub fn is_item_in_sync<PL: PathLen, AL: ArchiveLen>(
+pub fn is_item_in_sync<N: NumRoots>(
     path: &Path,
-    current_entry: &GenericArray<ArchiveEntryPerReplica, AL>,
+    current_entry: &GenericArray<ArchiveEntryPerReplica, N>,
     compare_file_contents: bool,
-    roots: &GenericArray<PathBuf, PL>
+    roots: &GenericArray<PathBuf, N>
 ) -> Result<bool, SyncError> {
 
     trace!("Checking for incompatible entry types (eg: file vs folder vs empty)");

@@ -15,7 +15,7 @@ use generic_array::{GenericArray};
 
 use state::{ArchiveEntryPerReplica};
 use util::FnvHashMap;
-use config::ArchiveLen;
+use NumRoots;
 
 const ARCHIVE_VERSION: u32 = 3;
 
@@ -83,7 +83,7 @@ impl ArchiveFile {
     /// Reads the archive entries into a Vec
     /// This may acquire (or wait for) a lock,
     /// ensuring that multiple threads/processes aren't reading/writing to/from the same archive file.
-    pub fn read<AL: ArchiveLen>(&mut self) -> Result<ArchiveEntries<AL>, ReadError> {
+    pub fn read<N: NumRoots>(&mut self) -> Result<ArchiveEntries<N>, ReadError> {
         if let Some(ref mut file) = self.file {
             let data = read_from_file(file, &self.path)?;
             Ok(ArchiveEntries::new(data))
@@ -106,7 +106,7 @@ impl ArchiveFile {
     }
 
     /// Writes entries to disk
-    pub fn write<AL: ArchiveLen>(&mut self, entries: &mut ArchiveEntries<AL>) -> Result<(), WriteError> {
+    pub fn write<N: NumRoots>(&mut self, entries: &mut ArchiveEntries<N>) -> Result<(), WriteError> {
         // prevents the archive sizes exploding
         entries.prune_deleted();
 
@@ -142,21 +142,21 @@ impl Drop for ArchiveFile {
     }
 }
 
-type ArchiveEntryMap<AL: ArchiveLen> = FnvHashMap<HashedPath, GenericArray<ArchiveEntryPerReplica, AL>>;
+type ArchiveEntryMap<N: NumRoots> = FnvHashMap<HashedPath, GenericArray<ArchiveEntryPerReplica, N>>;
 
 /// Stores all the archive entries for a specific directory
-pub struct ArchiveEntries<AL: ArchiveLen> {
-    entries: ArchiveEntryMap<AL>,
+pub struct ArchiveEntries<N: NumRoots> {
+    entries: ArchiveEntryMap<N>,
     dirty: bool
 }
 
-impl<AL: ArchiveLen> fmt::Debug for ArchiveEntries<AL> {
+impl<N: NumRoots> fmt::Debug for ArchiveEntries<N> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         self.entries.fmt(formatter)
     }
 }
 
-impl<AL: ArchiveLen> ArchiveEntries<AL> {
+impl<N: NumRoots> ArchiveEntries<N> {
     pub fn empty() -> Self {
         ArchiveEntries {
             entries: Default::default(),
@@ -164,7 +164,7 @@ impl<AL: ArchiveLen> ArchiveEntries<AL> {
         }
     }
 
-    fn new(entries: ArchiveEntryMap<AL>) -> Self {
+    fn new(entries: ArchiveEntryMap<N>) -> Self {
         ArchiveEntries {
             entries: entries,
             dirty: false
@@ -172,15 +172,15 @@ impl<AL: ArchiveLen> ArchiveEntries<AL> {
     }
 
     /// Returns an iterator over the entries.
-    pub fn iter(&self) -> hash_map::Iter<HashedPath, GenericArray<ArchiveEntryPerReplica, AL>> {
+    pub fn iter(&self) -> hash_map::Iter<HashedPath, GenericArray<ArchiveEntryPerReplica, N>> {
         self.entries.iter()
     }
 
-    pub fn get(&self, path: &Path) -> Option<&GenericArray<ArchiveEntryPerReplica, AL>> {
+    pub fn get(&self, path: &Path) -> Option<&GenericArray<ArchiveEntryPerReplica, N>> {
         self.entries.get(&Archive::hash(path))
     }
 
-    pub fn insert(&mut self, path: &Path, entries: GenericArray<ArchiveEntryPerReplica, AL>) {
+    pub fn insert(&mut self, path: &Path, entries: GenericArray<ArchiveEntryPerReplica, N>) {
         let hashed_path = Archive::hash(path);
         self.entries.insert(hashed_path, entries);
         self.dirty = true;
@@ -216,7 +216,7 @@ impl<AL: ArchiveLen> ArchiveEntries<AL> {
     }
 }
 
-fn read_from_file<AL: ArchiveLen>(file: &mut fs::File, path: &Path) -> Result<ArchiveEntryMap<AL>, ReadError> {
+fn read_from_file<N: NumRoots>(file: &mut fs::File, path: &Path) -> Result<ArchiveEntryMap<N>, ReadError> {
     debug!("Reading archive file {:?}", path);
     file.seek(io::SeekFrom::Start(0))?;
     match read_entries(file) {
@@ -233,7 +233,7 @@ fn read_from_file<AL: ArchiveLen>(file: &mut fs::File, path: &Path) -> Result<Ar
     }
 }
 
-fn write_to_file<AL: ArchiveLen>(file: &mut fs::File, path: &Path, entries: &ArchiveEntryMap<AL>) -> Result<(), WriteError> {
+fn write_to_file<N: NumRoots>(file: &mut fs::File, path: &Path, entries: &ArchiveEntryMap<N>) -> Result<(), WriteError> {
     info!("Writing to archive file {:?}: {:#?}", path, entries);
     file.set_len(0)?;
 
@@ -246,7 +246,7 @@ fn write_to_file<AL: ArchiveLen>(file: &mut fs::File, path: &Path, entries: &Arc
 }
 
 /// reads a set of entries from a binary stream
-fn read_entries<R: io::Read, AL: ArchiveLen>(read: &mut R) -> Result<ArchiveEntryMap<AL>, ReadError> {
+fn read_entries<R, N>(read: &mut R) -> Result<ArchiveEntryMap<N>, ReadError> where R: io::Read, N: NumRoots {
     let version = read.read_u32::<LittleEndian>()?;
     if version != ARCHIVE_VERSION {
         return Err(ReadError::InvalidArchiveVersion(version))
@@ -256,7 +256,7 @@ fn read_entries<R: io::Read, AL: ArchiveLen>(read: &mut R) -> Result<ArchiveEntr
 }
 
 // writes a set of entries to a binary stream
-fn write_entries<W: io::Write, AL: ArchiveLen>(out: &mut W, entries: &ArchiveEntryMap<AL>) -> Result<(), WriteError> {
+fn write_entries<W, N>(out: &mut W, entries: &ArchiveEntryMap<N>) -> Result<(), WriteError> where W: io::Write, N: NumRoots {
     out.write_u32::<LittleEndian>(ARCHIVE_VERSION)?;
     serialize_into(out, &entries, SizeLimit::Infinite)?;
     Ok(())

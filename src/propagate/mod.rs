@@ -8,22 +8,22 @@ use detect::Difference;
 use error::{SyncError, DescribeIoError};
 use archive::{Archive, ArchiveEntries};
 use state::{ArchiveEntryPerReplica};
-use config::*;
+use NumRoots;
 
 mod progress;
 pub use propagate::progress::{ProgressCallback, EmptyProgressCallback, ToCheck};
 
 /// Propagates a change from `master` to every other replica.
-pub fn propagate<T, P, PL, AL>(
-        difference: &Difference<PL, AL>,
+pub fn propagate<T, P, N>(
+        difference: &Difference<N>,
         master: usize,
         archive: &Archive,
         options: &T,
-        progress: &P) -> Result<(), SyncError> where T: PropagationOptions, P: ProgressCallback, PL: PathLen, AL: ArchiveLen {
+        progress: &P) -> Result<(), SyncError> where T: PropagationOptions, P: ProgressCallback, N: NumRoots {
     let ref master_entry = difference.current_state[master];
     let master_path = difference.absolute_path_for_root(master);
 
-    //let ref archive_update = ArchiveUpdateInfo::<PL, AL>::new(difference.path, &difference.roots, archive);
+    //let ref archive_update = ArchiveUpdateInfo::<PL, N>::new(difference.path, &difference.roots, archive);
 
     for (i, replica) in difference.current_state.iter().enumerate() {
         // skip the master
@@ -67,7 +67,7 @@ pub fn propagate<T, P, PL, AL>(
     }
 
     // Update the archives for this path and its children
-    update_archive_for_path::<PL, AL>(&difference.path, archive, &difference.roots)?;
+    update_archive_for_path::<N>(&difference.path, archive, &difference.roots)?;
 
     Ok(())
 }
@@ -146,10 +146,10 @@ fn run_rsync<P>(source: &Path, dest: &Path, progress: &P) -> io::Result<()> wher
 }
 
 /// Look at the archives in this path, and if it is a directory remove all descendants.
-fn update_archive_for_path<PL: PathLen, AL: ArchiveLen>(relative_path: &Path, archive: &Archive, roots: &[PathBuf]) -> Result<(), SyncError> {
+fn update_archive_for_path<N>(relative_path: &Path, archive: &Archive, roots: &[PathBuf]) -> Result<(), SyncError> where N: NumRoots {
     let directory = relative_path.parent().unwrap();
     let mut archive_file = archive.for_directory(directory);
-    let mut entries: ArchiveEntries<AL> = archive_file.read()?;
+    let mut entries: ArchiveEntries<N> = archive_file.read()?;
 
     // remove old archive information (only needed when `relative_path` is a directory)
     {
@@ -166,7 +166,7 @@ fn update_archive_for_path<PL: PathLen, AL: ArchiveLen>(relative_path: &Path, ar
 
                     trace!("Scanning archive file {:?} for descendant directories", item);
                     let mut archive_file = archive.for_hashed_directory(item);
-                    let entries: ArchiveEntries<AL> = archive_file.read()?;
+                    let entries: ArchiveEntries<N> = archive_file.read()?;
 
                     let dirs = entries.iter().filter(|&(_, replicas)| {
                         any_directories_in(&replicas)
@@ -188,7 +188,7 @@ fn update_archive_for_path<PL: PathLen, AL: ArchiveLen>(relative_path: &Path, ar
     info!("Updating {:?} in {}", relative_path, archive_file);
 
     // update archives for this exact path
-    let replicas = ArchiveEntryPerReplica::from_roots::<AL>(&roots, relative_path);
+    let replicas = ArchiveEntryPerReplica::from_roots::<N>(&roots, relative_path);
     entries.insert(relative_path, replicas);
     archive_file.write(&mut entries)?;
 
@@ -199,14 +199,14 @@ fn update_archive_for_path<PL: PathLen, AL: ArchiveLen>(relative_path: &Path, ar
             let entry = entry?;
             if entry.metadata()?.is_dir() {
                 let dir_relative_path = relative_path.join(entry.path().strip_prefix(&first_root).unwrap().as_os_str());
-                let mut entries = ArchiveEntries::<AL>::empty();
+                let mut entries = ArchiveEntries::<N>::empty();
 
                 for entry in entry.path().read_dir()? {
                     let entry = entry?;
                     if !entry.metadata()?.is_dir() {
 
                         let child_path = relative_path.join(entry.path().strip_prefix(&first_root).unwrap().as_os_str());
-                        let replicas = ArchiveEntryPerReplica::from_roots::<AL>(&roots, &child_path);
+                        let replicas = ArchiveEntryPerReplica::from_roots::<N>(&roots, &child_path);
                         entries.insert(&child_path, replicas)
                     }
                 }

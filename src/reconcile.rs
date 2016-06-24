@@ -1,5 +1,6 @@
 use detect::Difference;
-use config::*;
+use NumRoots;
+use ReplicaIndex;
 
 #[derive(Debug, Copy, Clone)]
 /// The result of `reconciliation`.
@@ -13,7 +14,7 @@ pub enum Operation {
 }
 
 /// Determines which replica (if any), has the most up-to-date copy of the item.
-pub fn guess_operation<PL: PathLen, AL: ArchiveLen>(difference: &Difference<PL, AL>) -> Operation {
+pub fn guess_operation<N: NumRoots>(difference: &Difference<N>) -> Operation {
     info!("Reconciling difference at {:?}", difference.path);
     match difference.previous_state {
         Some(ref previous_state) => {

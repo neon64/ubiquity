@@ -76,6 +76,10 @@ extern crate fs2;
 extern crate generic_array;
 extern crate typenum;
 
+use std::path::PathBuf;
+use state::ArchiveEntryPerReplica;
+use generic_array::{ArrayLength};
+
 /// Detects differences between replicas
 pub mod detect;
 /// Makes suggestions on how to resolve differences between replicas
@@ -94,3 +98,11 @@ pub mod error;
 
 mod compare_files;
 mod util;
+
+/// Trait which encapsulates the length of a `GenericArray<PathBuf>`/`GenericArray<ArchiveEntryPerReplica>`
+/// It will be automatically implemented for unsigned integers from the `typenum` crate.
+pub trait NumRoots: ArrayLength<PathBuf> + ArrayLength<ArchiveEntryPerReplica> {}
+impl<T: ArrayLength<PathBuf> + ArrayLength<ArchiveEntryPerReplica>> NumRoots for T {}
+
+/// A type representing an index into a list of replicas.
+pub type ReplicaIndex = usize;

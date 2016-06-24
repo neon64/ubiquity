@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use generic_array::{GenericArray};
 
 use error::SyncError;
-use config::*;
+use NumRoots;
+use config::SyncInfo;
 use archive::{Archive,ArchiveEntries};
 use util::FnvHashMap;
 use state::ArchiveEntryPerReplica;
@@ -15,30 +16,30 @@ mod util;
 /// An instance of this struct represents the files/folders differ.
 /// There may be a suggested action to be taken.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Difference<PL: PathLen, AL: ArchiveLen> {
+pub struct Difference<N: NumRoots> {
     /// The path at which the difference occurred
     pub path: PathBuf,
     /// The roots of the syncing operation
-    pub roots: GenericArray<PathBuf, PL>,
+    pub roots: GenericArray<PathBuf, N>,
     /// The previous state that may be present from the archive
-    pub previous_state: Option<GenericArray<ArchiveEntryPerReplica, AL>>,
+    pub previous_state: Option<GenericArray<ArchiveEntryPerReplica, N>>,
     /// The current state of the files
-    pub current_state: GenericArray<ArchiveEntryPerReplica, AL>
+    pub current_state: GenericArray<ArchiveEntryPerReplica, N>
 }
 
-impl<PL: PathLen, AL: ArchiveLen> Difference<PL, AL> {
+impl<N: NumRoots> Difference<N> {
     pub fn absolute_path_for_root(&self, index: usize) -> PathBuf {
         self.roots[index].join(&self.path)
     }
 }
 
 /// The result of update detection
-pub struct DetectionResult<PL: PathLen, AL: ArchiveLen> {
-    pub differences: Vec<Difference<PL, AL>>,
+pub struct DetectionResult<N: NumRoots> {
+    pub differences: Vec<Difference<N>>,
     pub statistics: DetectionStatistics
 }
 
-impl<PL: PathLen, AL: ArchiveLen> DetectionResult<PL, AL> {
+impl<N: NumRoots> DetectionResult<N> {
     fn new() -> Self {
         DetectionResult {
             differences: Vec::new(),
@@ -46,7 +47,7 @@ impl<PL: PathLen, AL: ArchiveLen> DetectionResult<PL, AL> {
         }
     }
 
-    fn add_difference(&mut self, conflict: Difference<PL, AL>) {
+    fn add_difference(&mut self, conflict: Difference<N>) {
         let mut add = true;
 
         self.differences.retain(|other| {
@@ -137,9 +138,9 @@ impl ProgressCallback for EmptyProgressCallback {
 /// to the list. If `recurse` is false, then just the items in that directory will be considered.
 ///
 /// The archive is used to speed up update detection by comparing  the `ino` and `ctime` properties of a file/directory to a previously known value, instead of directly comparing file contents accross replicas.
-pub fn find_updates<AL: ArchiveLen, PL: PathLen, P: ProgressCallback>(archive: &Archive, search: &mut SearchDirectories, config: &SyncInfo<PL, AL>, progress_callback: &P) -> Result<DetectionResult<PL, AL>, SyncError> {
+pub fn find_updates<N, P>(archive: &Archive, search: &mut SearchDirectories, config: &SyncInfo<N>, progress_callback: &P) -> Result<DetectionResult<N>, SyncError> where N: NumRoots, P: ProgressCallback {
     // this is used to keep track of the current items in the current search directory
-    let mut current_entries: FnvHashMap<PathBuf, GenericArray<ArchiveEntryPerReplica, AL>> = Default::default();
+    let mut current_entries: FnvHashMap<PathBuf, GenericArray<ArchiveEntryPerReplica, N>> = Default::default();
     let mut result = DetectionResult::new();
     let mut read_directories = 0;
 
@@ -167,7 +168,7 @@ pub fn find_updates<AL: ArchiveLen, PL: PathLen, P: ProgressCallback>(archive: &
 
         // get the previous entries (a snapshot of what it was like)
         let mut sd_archive_file = archive.for_directory(&sd);
-        let mut sd_archive_entries: ArchiveEntries<AL> = sd_archive_file.read()?.into();
+        let mut sd_archive_entries: ArchiveEntries<N> = sd_archive_file.read()?.into();
 
         // scan the directory contents accross all replicas, adding items to check to `current_entries`
         scan_directory_contents(&sd, &mut current_entries, config)?;

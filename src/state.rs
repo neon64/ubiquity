@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
 use generic_array::GenericArray;
 
-use config::*;
+use NumRoots;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Mirrors the state of a path on the filesystem.
@@ -16,7 +16,7 @@ pub enum ArchiveEntryPerReplica {
 
 impl ArchiveEntryPerReplica {
     /// Creates an array of ArchiveEntryPerReplica instances that reflect the current state of `path` inside `roots`.
-    pub fn from_roots<AL: ArchiveLen>(roots: &[PathBuf], path: &Path) -> GenericArray<ArchiveEntryPerReplica, AL> {
+    pub fn from_roots<N: NumRoots>(roots: &[PathBuf], path: &Path) -> GenericArray<ArchiveEntryPerReplica, N> {
         GenericArray::map_slice(roots, |root: &PathBuf| ArchiveEntryPerReplica::from(root.join(path).as_ref()))
     }
 
