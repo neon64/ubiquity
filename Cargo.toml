@@ -1,6 +1,6 @@
 [package]
 name = "ubiquity"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["Chris Chamberlain <c.chamberlain@iinet.net.au>"]
 description = "n-directional file synchronization utility"
 repository = "https://github.com/neon64/ubiquity"
