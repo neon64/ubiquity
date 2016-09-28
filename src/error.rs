@@ -15,7 +15,9 @@ pub enum SyncError {
     ArchiveWriteError(archive::WriteError),
     /// The requested operation was cancelled before it could be completed.
     Cancelled,
-    WalkDirError(WalkDirError)
+    WalkDirError(WalkDirError),
+    /// The rsync executable wasn't found
+    RsyncNotFound(String)
 }
 
 impl From<io::Error> for SyncError {
@@ -59,7 +61,8 @@ impl fmt::Display for SyncError {
             SyncError::ArchiveWriteError(ref e) => write!(f, "archive write error: {:?}", e),
             SyncError::ArchiveReadError(ref e) => write!(f, "archive read error: {:?}", e),
             SyncError::Cancelled => write!(f, "operation cancelled"),
-            SyncError::WalkDirError(ref e) => write!(f, "walk dir error: {:?}", e)
+            SyncError::WalkDirError(ref e) => write!(f, "walk dir error: {:?}", e),
+            SyncError::RsyncNotFound(ref path) => write!(f, "rsync executable not found at: {:?}", path)
         }
     }
 }

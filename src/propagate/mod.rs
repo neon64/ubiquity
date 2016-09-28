@@ -100,9 +100,7 @@ fn transfer_file<P>(source: &Path, dest: &Path, progress: &P) -> Result<(), Sync
     }
     info!("Transferring file {:?} to {:?}", source, dest);
     run_rsync(source, dest, progress)
-        .describe(|| format!("while copying file from {:?} to {:?}", source, dest))?;
-
-    Ok(())
+        //.describe(|| format!("while copying file from {:?} to {:?}", source, dest))?;
 }
 
 fn transfer_directory<P>(source: &Path, dest: &Path, progress: &P) -> Result<(), SyncError> where P: ProgressCallback {
@@ -110,24 +108,29 @@ fn transfer_directory<P>(source: &Path, dest: &Path, progress: &P) -> Result<(),
 
     info!("Copying directory {:?} to {:?}", source, dest);
     run_rsync(source, dest, progress)
-        .describe(|| format!("while copying directory from {:?} to {:?}", source, dest))?;
-
-    Ok(())
+        //.describe(|| format!("while copying directory from {:?} to {:?}", source, dest))?;
 }
 
-fn run_rsync<P>(source: &Path, dest: &Path, progress: &P) -> io::Result<()> where P: ProgressCallback {
+fn run_rsync<P>(source: &Path, dest: &Path, progress: &P) -> Result<(), SyncError> where P: ProgressCallback {
+    let rsync = "/usr/local/bin/rsync";
     let append_slash = source.metadata()?.is_dir();
     let mut source_str = source.to_string_lossy().into_owned();
     if append_slash {
         source_str.push_str("/");
     }
-    let mut command = process::Command::new("/usr/local/bin/rsync");
+    let mut command = process::Command::new(rsync);
     let command = command.arg("-a")
         .arg("--info=progress2")
         .arg(source_str)
         .stdout(process::Stdio::piped())
         .arg(dest.to_string_lossy().as_ref());
-    let mut command = command.spawn()?;
+    let mut command = match command.spawn() {
+        Ok(command) => command,
+        Err(err) => match err.kind() {
+            io::ErrorKind::NotFound => return Err(SyncError::RsyncNotFound(rsync.to_owned())),
+            _ => return Err(err.into())
+        }
+    };
 
     {
         let stdout = command.stdout.as_mut().unwrap();
@@ -244,10 +247,9 @@ pub trait PropagationOptions {
 
     /// Delete the directory and its contents
     /// This must return an error if the directory was not removed successfully.
-    /// Ignoring errors will mean that Ubiquity writes to the archive files when
+    /// Ignoring errors will mean that  writes to the archive files when
     /// the replicas are still out of sync, resulting in an inconsistent state.
     fn remove_dir_all(&self, &Path) -> Result<(), SyncError>;
-
 }
 
 /// A zero-sized struct with a simple implementation of PropagationOptions.
