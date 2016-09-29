@@ -58,10 +58,10 @@
 //! }
 //! ```
 
-#![feature(plugin)]
 #![feature(question_mark)]
-#![feature(custom_derive)]
-#![plugin(serde_macros)]
+#![feature(rustc_macro)]
+//#![feature(structural_match)]
+//#![feature(rustc_attrs)]
 
 extern crate fnv;
 #[macro_use]
@@ -71,6 +71,8 @@ extern crate regex;
 extern crate byteorder;
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate serde_derive;
 extern crate walkdir;
 extern crate fs2;
 extern crate generic_array;

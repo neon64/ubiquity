@@ -1,6 +1,6 @@
 [package]
 name = "ubiquity"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Chris Chamberlain <c.chamberlain@iinet.net.au>"]
 description = "n-directional file synchronization utility"
 repository = "https://github.com/neon64/ubiquity"
@@ -10,8 +10,8 @@ license = "MIT"
 [dependencies]
 fnv = "~1.0.2"
 bincode = "~0.6.0"
-serde = "~0.8"
-serde_macros = "~0.8"
+serde = "0.8"
+serde_derive = "0.8"
 byteorder = "~0.5"
 log = "~0.3.6"
 regex = "~0.1"
