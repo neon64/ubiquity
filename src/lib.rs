@@ -60,8 +60,8 @@
 
 #![feature(question_mark)]
 #![feature(rustc_macro)]
-//#![feature(structural_match)]
-//#![feature(rustc_attrs)]
+#![feature(structural_match)]
+#![feature(rustc_attrs)]
 
 extern crate fnv;
 #[macro_use]
