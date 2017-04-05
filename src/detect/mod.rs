@@ -10,6 +10,8 @@ use state::ArchiveEntryPerReplica;
 use detect::util::*;
 use detect::ext::is_item_in_sync;
 
+use serde::{Serialize, Deserialize};
+
 mod ext;
 mod util;
 
@@ -19,10 +21,13 @@ mod util;
 pub struct Difference<N: NumRoots> {
     /// The path at which the difference occurred
     pub path: PathBuf,
+    #[serde(bound(serialize = "GenericArray<PathBuf, N>: Serialize", deserialize = "GenericArray<PathBuf, N>: Deserialize"))]
     /// The roots of the syncing operation
     pub roots: GenericArray<PathBuf, N>,
+    #[serde(bound(serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize", deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize"))]
     /// The previous state that may be present from the archive
     pub previous_state: Option<GenericArray<ArchiveEntryPerReplica, N>>,
+    #[serde(bound(serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize", deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize"))]
     /// The current state of the files
     pub current_state: GenericArray<ArchiveEntryPerReplica, N>
 }

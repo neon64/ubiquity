@@ -58,13 +58,9 @@
 //! }
 //! ```
 
-#![feature(question_mark)]
-#![feature(rustc_macro)]
-#![feature(structural_match)]
-#![feature(rustc_attrs)]
+#![feature(proc_macro)]
 
 extern crate fnv;
-#[macro_use]
 extern crate bincode;
 extern crate serde;
 extern crate regex;

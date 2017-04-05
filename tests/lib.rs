@@ -1,6 +1,3 @@
-
-#![feature(question_mark)]
-
 extern crate env_logger;
 extern crate ubiquity;
 extern crate regex;
