@@ -1,4 +1,4 @@
-# Ubiquity
+# Ubiquity - File Syncing Library
 
 ![crates.io version](https://img.shields.io/crates/v/ubiquity) ![crates.io downloads](https://img.shields.io/crates/d/ubiquity)
 
@@ -93,6 +93,3 @@ Tests can be run using `cargo test` as usual, but it may be advantageous to use 
 ```
 $ env RUST_LOG=debug cargo test -- --test-threads 1
 ```
-
-
-TODO: replace manual loops with ArchiveEntryPerReplica::from_roots

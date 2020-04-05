@@ -1,5 +1,4 @@
 use std::fs;
-use std::iter::FromIterator;
 use std::path::{Path, PathBuf};
 
 use generic_array::GenericArray;
@@ -61,7 +60,7 @@ where
     N: NumRoots,
 {
     // when looking at the contents of this search directory, we must check if the
-    // search directory itself is present across. if it is, then we will add it to the list
+    // search directory itself is present across replicas. if it is, then we will add it to the list
     // of paths to check.
     let mut sd_present_in_all_replicas = true;
 
@@ -73,12 +72,9 @@ where
             // loop through dir
             for item in fs::read_dir(absolute_directory)? {
                 let relative_path = item?.path();
-                let relative_path = relative_path
-                    .strip_prefix(root)
-                    .unwrap_or_else(|_| {
-                        panic!("couldn't strip prefix {:?} from {:?}", root, relative_path)
-                    })
-                    .to_path_buf();
+                let relative_path = relative_path.strip_prefix(root).unwrap_or_else(|_| {
+                    panic!("couldn't strip prefix {:?} from {:?}", root, relative_path)
+                });
 
                 if is_ignored(&config.ignore, &relative_path) {
                     info!("Ignoring entry {:?}", relative_path);
@@ -89,12 +85,9 @@ where
 
                 // insert current filesystem state
                 current_entries
-                    .entry(relative_path.clone())
+                    .entry(relative_path.to_path_buf())
                     .or_insert_with(|| {
-                        GenericArray::from_iter(config.roots.iter().map(|root| {
-                            let absolute_path = root.join(&relative_path);
-                            ArchiveEntryPerReplica::from(&*absolute_path)
-                        }))
+                        ArchiveEntryPerReplica::from_roots::<N>(&config.roots, &relative_path)
                     });
             }
         } else {
@@ -106,12 +99,7 @@ where
     if !sd_present_in_all_replicas {
         current_entries
             .entry(directory.to_path_buf())
-            .or_insert_with(|| {
-                GenericArray::from_iter(config.roots.iter().map(|root| {
-                    let absolute_path = root.join(directory);
-                    ArchiveEntryPerReplica::from(&*absolute_path)
-                }))
-            });
+            .or_insert_with(|| ArchiveEntryPerReplica::from_roots::<N>(&config.roots, &directory));
     }
 
     Ok(())
