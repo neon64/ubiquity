@@ -1,5 +1,7 @@
 # Ubiquity
 
+![crates.io version](https://img.shields.io/crates/v/ubiquity) ![crates.io downloads](https://img.shields.io/crates/d/ubiquity)
+
 Ubiquity is a new file syncing *library* written in Rust. It is loosely inspired by [Unison](https://www.cis.upenn.edu/~bcpierce/unison/), another great sync utility, but it is designed first and foremost as a library not a command line utility, and it also handles an unlimited number of replicas.
 
 ## Features
