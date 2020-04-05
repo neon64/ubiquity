@@ -1,16 +1,18 @@
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::iter::FromIterator;
+use std::path::{Path, PathBuf};
 
-use generic_array::{GenericArray};
+use generic_array::GenericArray;
 
-use error::SyncError;
-use util::FnvHashMap;
-use state::ArchiveEntryPerReplica;
-use NumRoots;
-use config::{SyncInfo, Ignore};
+use crate::config::{Ignore, SyncInfo};
+use crate::error::SyncError;
+use crate::state::ArchiveEntryPerReplica;
+use crate::util::FnvHashMap;
+use crate::NumRoots;
 
-pub fn check_all_roots_exist<'a, I: Iterator<Item = &'a PathBuf>>(roots: I) -> Result<(), SyncError> {
+pub fn check_all_roots_exist<'a, I: Iterator<Item = &'a PathBuf>>(
+    roots: I,
+) -> Result<(), SyncError> {
     for root in roots {
         if !root.exists() {
             return Err(SyncError::RootDoesntExist(root.to_path_buf()));
@@ -20,7 +22,10 @@ pub fn check_all_roots_exist<'a, I: Iterator<Item = &'a PathBuf>>(roots: I) -> R
 }
 
 /// checks that all the archive files for this path are identical
-pub fn are_archive_files_identical<N: NumRoots>(a: &GenericArray<ArchiveEntryPerReplica, N>, b: &GenericArray<ArchiveEntryPerReplica, N>) -> bool {
+pub fn are_archive_files_identical<N: NumRoots>(
+    a: &GenericArray<ArchiveEntryPerReplica, N>,
+    b: &GenericArray<ArchiveEntryPerReplica, N>,
+) -> bool {
     for (a, b) in a.iter().zip(b.iter()) {
         if a != b {
             return false;
@@ -43,10 +48,18 @@ pub fn is_ignored(ignore: &Ignore, path: &Path) -> bool {
             return true;
         }
     }
-    return false;
+
+    false
 }
 
-pub fn scan_directory_contents<N>(directory: &Path, current_entries: &mut FnvHashMap<PathBuf, GenericArray<ArchiveEntryPerReplica, N>>, config: &SyncInfo<N>) -> Result<(), SyncError> where N: NumRoots {
+pub fn scan_directory_contents<N>(
+    directory: &Path,
+    current_entries: &mut FnvHashMap<PathBuf, GenericArray<ArchiveEntryPerReplica, N>>,
+    config: &SyncInfo<N>,
+) -> Result<(), SyncError>
+where
+    N: NumRoots,
+{
     // when looking at the contents of this search directory, we must check if the
     // search directory itself is present across. if it is, then we will add it to the list
     // of paths to check.
@@ -57,11 +70,15 @@ pub fn scan_directory_contents<N>(directory: &Path, current_entries: &mut FnvHas
     for root in config.roots.iter() {
         let absolute_directory = root.join(directory);
         if absolute_directory.is_dir() {
-
             // loop through dir
             for item in fs::read_dir(absolute_directory)? {
                 let relative_path = item?.path();
-                let relative_path = relative_path.strip_prefix(root).unwrap_or_else(|_| panic!("couldn't strip prefix {:?} from {:?}", root, relative_path)).to_path_buf();
+                let relative_path = relative_path
+                    .strip_prefix(root)
+                    .unwrap_or_else(|_| {
+                        panic!("couldn't strip prefix {:?} from {:?}", root, relative_path)
+                    })
+                    .to_path_buf();
 
                 if is_ignored(&config.ignore, &relative_path) {
                     info!("Ignoring entry {:?}", relative_path);
@@ -71,14 +88,14 @@ pub fn scan_directory_contents<N>(directory: &Path, current_entries: &mut FnvHas
                 trace!("Adding entry {:?}", relative_path);
 
                 // insert current filesystem state
-                current_entries.entry(relative_path.clone()).or_insert_with(|| {
-                    GenericArray::from_iter(
-                        config.roots.iter().map(|root| {
+                current_entries
+                    .entry(relative_path.clone())
+                    .or_insert_with(|| {
+                        GenericArray::from_iter(config.roots.iter().map(|root| {
                             let absolute_path = root.join(&relative_path);
                             ArchiveEntryPerReplica::from(&*absolute_path)
-                        })
-                    )
-                });
+                        }))
+                    });
             }
         } else {
             sd_present_in_all_replicas = false;
@@ -87,14 +104,14 @@ pub fn scan_directory_contents<N>(directory: &Path, current_entries: &mut FnvHas
     }
 
     if !sd_present_in_all_replicas {
-        current_entries.entry(directory.to_path_buf()).or_insert(
-            GenericArray::from_iter(
-                config.roots.iter().map(|root| {
+        current_entries
+            .entry(directory.to_path_buf())
+            .or_insert_with(|| {
+                GenericArray::from_iter(config.roots.iter().map(|root| {
                     let absolute_path = root.join(directory);
                     ArchiveEntryPerReplica::from(&*absolute_path)
-                })
-            )
-        );
+                }))
+            });
     }
 
     Ok(())

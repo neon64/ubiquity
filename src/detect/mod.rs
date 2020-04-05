@@ -1,16 +1,16 @@
+use generic_array::GenericArray;
 use std::path::{Path, PathBuf};
-use generic_array::{GenericArray};
 
-use error::SyncError;
-use NumRoots;
-use config::SyncInfo;
-use archive::{Archive,ArchiveEntries};
-use util::FnvHashMap;
-use state::ArchiveEntryPerReplica;
-use detect::util::*;
-use detect::ext::is_item_in_sync;
+use crate::archive::{Archive, ArchiveEntries};
+use crate::config::SyncInfo;
+use crate::detect::ext::is_item_in_sync;
+use crate::detect::util::*;
+use crate::error::SyncError;
+use crate::state::ArchiveEntryPerReplica;
+use crate::util::FnvHashMap;
+use crate::NumRoots;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 mod ext;
 mod util;
@@ -22,17 +22,26 @@ pub struct Difference<N: NumRoots> {
     /// The path at which the difference occurred
     pub path: PathBuf,
 
-    #[serde(bound(serialize = "GenericArray<PathBuf, N>: Serialize", deserialize = "GenericArray<PathBuf, N>: Deserialize<'de>"))]
+    #[serde(bound(
+        serialize = "GenericArray<PathBuf, N>: Serialize",
+        deserialize = "GenericArray<PathBuf, N>: Deserialize<'de>"
+    ))]
     /// The roots of the syncing operation
     pub roots: GenericArray<PathBuf, N>,
 
-    #[serde(bound(serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize", deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize<'de>"))]
+    #[serde(bound(
+        serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize",
+        deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize<'de>"
+    ))]
     /// The previous state that may be present from the archive
     pub previous_state: Option<GenericArray<ArchiveEntryPerReplica, N>>,
 
-    #[serde(bound(serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize", deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize<'de>"))]
+    #[serde(bound(
+        serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize",
+        deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize<'de>"
+    ))]
     /// The current state of the files
-    pub current_state: GenericArray<ArchiveEntryPerReplica, N>
+    pub current_state: GenericArray<ArchiveEntryPerReplica, N>,
 }
 
 impl<N: NumRoots> Difference<N> {
@@ -44,15 +53,21 @@ impl<N: NumRoots> Difference<N> {
 /// The result of update detection
 pub struct DetectionResult<N: NumRoots> {
     pub differences: Vec<Difference<N>>,
-    pub statistics: DetectionStatistics
+    pub statistics: DetectionStatistics,
+}
+
+impl<N: NumRoots> Default for DetectionResult<N> {
+    fn default() -> Self {
+        DetectionResult {
+            differences: Vec::new(),
+            statistics: DetectionStatistics::new(),
+        }
+    }
 }
 
 impl<N: NumRoots> DetectionResult<N> {
     fn new() -> Self {
-        DetectionResult {
-            differences: Vec::new(),
-            statistics: DetectionStatistics::new()
-        }
+        Default::default()
     }
 
     fn add_difference(&mut self, conflict: Difference<N>) {
@@ -81,7 +96,7 @@ impl<N: NumRoots> DetectionResult<N> {
 #[derive(Debug, Clone)]
 pub struct SearchDirectories {
     pub directories: Vec<PathBuf>,
-    pub recurse: bool
+    pub recurse: bool,
 }
 
 impl SearchDirectories {
@@ -89,18 +104,17 @@ impl SearchDirectories {
     pub fn from_root() -> SearchDirectories {
         SearchDirectories {
             directories: vec![Path::new("").to_path_buf()],
-            recurse: true
+            recurse: true,
         }
     }
 
     pub fn new(directories: Vec<PathBuf>, recurse: bool) -> Self {
         SearchDirectories {
-            directories: directories,
-            recurse: recurse
+            directories,
+            recurse,
         }
     }
 }
-
 
 #[derive(Debug)]
 /// Basic statistics about the accuracy of archives during the detection process.
@@ -108,15 +122,21 @@ pub struct DetectionStatistics {
     /// The number of times the archives were up to date and reported no change.
     pub archive_hits: usize,
     /// The number of times the archives had to be added to.
-    pub archive_additions: usize
+    pub archive_additions: usize,
+}
+
+impl Default for DetectionStatistics {
+    fn default() -> Self {
+        DetectionStatistics {
+            archive_hits: 0,
+            archive_additions: 0,
+        }
+    }
 }
 
 impl DetectionStatistics {
     pub fn new() -> Self {
-        DetectionStatistics {
-            archive_hits: 0,
-            archive_additions: 0_
-        }
+        Default::default()
     }
 }
 
@@ -133,12 +153,6 @@ impl ProgressCallback for EmptyProgressCallback {
     fn reading_directory(&self, _: &Path, _: usize, _: usize) {}
 }
 
-
-
-
-
-
-
 /// This mammoth function detects all differences between the two replicas,
 /// inside the provided search directories.
 ///
@@ -146,23 +160,35 @@ impl ProgressCallback for EmptyProgressCallback {
 /// to the list. If `recurse` is false, then just the items in that directory will be considered.
 ///
 /// The archive is used to speed up update detection by comparing  the `ino` and `ctime` properties of a file/directory to a previously known value, instead of directly comparing file contents accross replicas.
-pub fn find_updates<N, P>(archive: &Archive, search: &mut SearchDirectories, config: &SyncInfo<N>, progress_callback: &P) -> Result<DetectionResult<N>, SyncError> where N: NumRoots, P: ProgressCallback {
+pub fn find_updates<N, P>(
+    archive: &Archive,
+    search: &mut SearchDirectories,
+    config: &SyncInfo<N>,
+    progress_callback: &P,
+) -> Result<DetectionResult<N>, SyncError>
+where
+    N: NumRoots,
+    P: ProgressCallback,
+{
     // this is used to keep track of the current items in the current search directory
-    let mut current_entries: FnvHashMap<PathBuf, GenericArray<ArchiveEntryPerReplica, N>> = Default::default();
+    let mut current_entries: FnvHashMap<PathBuf, GenericArray<ArchiveEntryPerReplica, N>> =
+        Default::default();
     let mut result = DetectionResult::new();
     let mut read_directories = 0;
 
     // warn about non-existent roots early in the processes
     check_all_roots_exist(config.roots.iter())?;
 
-    search.directories.retain(|dir| !is_ignored(&config.ignore, &dir));
+    search
+        .directories
+        .retain(|dir| !is_ignored(&config.ignore, &dir));
 
     loop {
         current_entries.clear();
 
         let sd = match search.directories.pop() {
             Some(d) => d,
-            None => break
+            None => break,
         };
 
         if sd.is_absolute() {
@@ -176,7 +202,7 @@ pub fn find_updates<N, P>(archive: &Archive, search: &mut SearchDirectories, con
 
         // get the previous entries (a snapshot of what it was like)
         let mut sd_archive_file = archive.for_directory(&sd);
-        let mut sd_archive_entries: ArchiveEntries<N> = sd_archive_file.read()?.into();
+        let mut sd_archive_entries: ArchiveEntries<N> = sd_archive_file.read()?;
 
         // scan the directory contents accross all replicas, adding items to check to `current_entries`
         scan_directory_contents(&sd, &mut current_entries, config)?;
@@ -194,7 +220,12 @@ pub fn find_updates<N, P>(archive: &Archive, search: &mut SearchDirectories, con
             }
 
             if keep_checking {
-                if is_item_in_sync(path, current_entry, config.compare_file_contents, &config.roots)? {
+                if is_item_in_sync(
+                    path,
+                    current_entry,
+                    config.compare_file_contents,
+                    &config.roots,
+                )? {
                     // This item is identical, let's store that in the archive for next time
                     sd_archive_entries.insert(path, current_entry.clone());
                     result.statistics.archive_additions += 1;
@@ -205,7 +236,7 @@ pub fn find_updates<N, P>(archive: &Archive, search: &mut SearchDirectories, con
                         path: path.to_path_buf(),
                         roots: config.roots.clone(),
                         previous_state: sd_archive_entries.get(path).cloned(),
-                        current_state: current_entry.clone()
+                        current_state: current_entry.clone(),
                     };
                     result.add_difference(difference);
                     continue;

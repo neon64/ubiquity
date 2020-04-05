@@ -1,6 +1,6 @@
 extern crate env_logger;
-extern crate ubiquity;
 extern crate regex;
+extern crate ubiquity;
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -11,16 +11,16 @@ use typenum::U2;
 
 use regex::Regex;
 
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::io;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
+use ubiquity::archive::Archive;
 use ubiquity::config::*;
 use ubiquity::detect;
-use ubiquity::reconcile;
 use ubiquity::propagate;
-use ubiquity::archive::Archive;
+use ubiquity::reconcile;
 
 fn set_up(name: &'static str) -> (Archive, SyncInfo) {
     let _ = env_logger::init();
@@ -37,14 +37,20 @@ fn set_up(name: &'static str) -> (Archive, SyncInfo) {
 
     let archive = Archive::new(archive_path).unwrap();
 
-    return (archive, config)
+    return (archive, config);
 }
 
 #[test]
 fn test_differences_are_empty() {
     let (archive, config) = set_up("differences_are_empty");
 
-    let result = detect::find_updates(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::EmptyProgressCallback).unwrap();
+    let result = detect::find_updates(
+        &archive,
+        &mut detect::SearchDirectories::from_root(),
+        &config,
+        &detect::EmptyProgressCallback,
+    )
+    .unwrap();
     assert!(result.differences.is_empty());
 }
 
@@ -58,7 +64,13 @@ fn test_files_are_ignored() {
     fs::File::create(config.roots[0].join("something_contains_foo")).unwrap();
     fs::create_dir(config.roots[0].join("baz")).unwrap();
 
-    let result = detect::find_updates(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::EmptyProgressCallback).unwrap();
+    let result = detect::find_updates(
+        &archive,
+        &mut detect::SearchDirectories::from_root(),
+        &config,
+        &detect::EmptyProgressCallback,
+    )
+    .unwrap();
     assert!(result.differences.is_empty());
 }
 
@@ -69,7 +81,13 @@ fn test_changes_are_detected() {
     let mut test_document = fs::File::create(config.roots[1].join("Test Document")).unwrap();
     write!(test_document, "Hello World").unwrap();
 
-    let result = detect::find_updates(&archive, &mut detect::SearchDirectories::from_root(), &config, &detect::EmptyProgressCallback).unwrap();
+    let result = detect::find_updates(
+        &archive,
+        &mut detect::SearchDirectories::from_root(),
+        &config,
+        &detect::EmptyProgressCallback,
+    )
+    .unwrap();
     assert_eq!(result.differences.len(), 1);
     assert_eq!(&result.differences[0].path, Path::new("Test Document"));
 }
@@ -82,9 +100,13 @@ fn test_nested_differences_are_removed() {
     fs::create_dir(config.roots[0].join("baz/qux")).unwrap();
     fs::File::create(config.roots[0].join("baz/qux/cub")).unwrap();
 
-    let mut sd = detect::SearchDirectories::new(vec![Path::new("baz").into(), Path::new("baz/qux").into()], false);
+    let mut sd = detect::SearchDirectories::new(
+        vec![Path::new("baz").into(), Path::new("baz/qux").into()],
+        false,
+    );
 
-    let result = detect::find_updates(&archive, &mut sd, &config, &detect::EmptyProgressCallback).unwrap();
+    let result =
+        detect::find_updates(&archive, &mut sd, &config, &detect::EmptyProgressCallback).unwrap();
     assert_eq!(result.differences.len(), 1);
     assert_eq!(&result.differences[0].path, Path::new("baz"));
 }
@@ -104,7 +126,13 @@ fn test_differences_are_resolved() {
     detect_and_resolve(&archive, &config, sd);
 
     info!("Checking replicas are in sync");
-    let result = detect::find_updates(&archive, &mut sd.clone(), &config, &detect::EmptyProgressCallback).unwrap();
+    let result = detect::find_updates(
+        &archive,
+        &mut sd.clone(),
+        &config,
+        &detect::EmptyProgressCallback,
+    )
+    .unwrap();
     assert_eq!(result.statistics.archive_additions, 0);
     assert_eq!(result.differences.len(), 0);
 
@@ -115,7 +143,13 @@ fn test_differences_are_resolved() {
     detect_and_resolve(&archive, &config, sd);
 
     info!("Checking replicas are in sync");
-    let result = detect::find_updates(&archive, &mut sd.clone(), &config, &detect::EmptyProgressCallback).unwrap();
+    let result = detect::find_updates(
+        &archive,
+        &mut sd.clone(),
+        &config,
+        &detect::EmptyProgressCallback,
+    )
+    .unwrap();
     assert_eq!(result.differences.len(), 0);
     assert_eq!(result.statistics.archive_additions, 0);
 }
@@ -127,15 +161,32 @@ fn test_regex_forward_slash() {
     assert!(!r.is_match("/Users/bob/awesome/target"));
 }
 
-fn detect_and_resolve(archive: &Archive, config: &SyncInfo<U2>, search_directories: &detect::SearchDirectories) {
-    let result = detect::find_updates(archive, &mut search_directories.clone(), config, &detect::EmptyProgressCallback).unwrap();
+fn detect_and_resolve(
+    archive: &Archive,
+    config: &SyncInfo<U2>,
+    search_directories: &detect::SearchDirectories,
+) {
+    let result = detect::find_updates(
+        archive,
+        &mut search_directories.clone(),
+        config,
+        &detect::EmptyProgressCallback,
+    )
+    .unwrap();
 
     info!("{} differences", result.differences.len());
     for difference in result.differences {
         let operation = reconcile::guess_operation(&difference);
         info!("difference {:?}: {:?}", difference.path, operation);
         if let reconcile::Operation::PropagateFromMaster(master) = operation {
-            propagate::propagate(&difference, master, &archive, &propagate::DefaultPropagationOptions, &propagate::EmptyProgressCallback).unwrap();
+            propagate::propagate(
+                &difference,
+                master,
+                &archive,
+                &propagate::DefaultPropagationOptions,
+                &propagate::EmptyProgressCallback,
+            )
+            .unwrap();
         }
     }
 }

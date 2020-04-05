@@ -1,6 +1,6 @@
-use detect::Difference;
-use NumRoots;
-use ReplicaIndex;
+use crate::detect::Difference;
+use crate::NumRoots;
+use crate::ReplicaIndex;
 
 #[derive(Debug, Copy, Clone)]
 /// The result of `reconciliation`.
@@ -10,7 +10,7 @@ pub enum Operation {
     /// the item was changed on multiple replicas and we don't know which
     ItemChangedOnMultipleReplicas,
     /// the item differs, but there was no previous state in the archives so we don't know which replica is 'correct'
-    ItemDiffersBetweenReplicasAndNoArchive
+    ItemDiffersBetweenReplicasAndNoArchive,
 }
 
 /// Determines which replica (if any), has the most up-to-date copy of the item.
@@ -26,8 +26,10 @@ pub fn guess_operation<N: NumRoots>(difference: &Difference<N>) -> Operation {
             for (i, replica) in difference.current_state.iter().enumerate() {
                 // if it has changed on this replica
                 if replica != &previous_state[i] {
-
-                    debug!("Item was changed in replica {}: was {:?}, now {:?}", i, previous_state[i], replica);
+                    debug!(
+                        "Item was changed in replica {}: was {:?}, now {:?}",
+                        i, previous_state[i], replica
+                    );
                     if let Operation::PropagateFromMaster(_) = result {
                         // it has changed on multiple replicas so we don't know which one is correct
                         return Operation::ItemChangedOnMultipleReplicas;
@@ -38,7 +40,7 @@ pub fn guess_operation<N: NumRoots>(difference: &Difference<N>) -> Operation {
                 }
             }
             result
-        },
+        }
         None => {
             debug!("No previous state from the archive");
             let mut result = Operation::ItemDiffersBetweenReplicasAndNoArchive;

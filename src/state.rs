@@ -1,11 +1,11 @@
-use std::convert::From;
-use std::path::{Path, PathBuf};
-use std::os::unix::fs::MetadataExt;
 use generic_array::GenericArray;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::convert::From;
 use std::iter::FromIterator;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
-use NumRoots;
+use crate::NumRoots;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Mirrors the state of a path on the filesystem.
@@ -13,7 +13,7 @@ pub enum ArchiveEntryPerReplica {
     Empty,
     Directory(ArchiveEntryExists),
     File(ArchiveEntryExists),
-    Symlink(ArchiveEntryExists)
+    Symlink(ArchiveEntryExists),
 }
 
 /// TODO: This is potentialy dodgy, and has just been implemented to satisfy generic bounds for
@@ -27,11 +27,14 @@ impl Default for ArchiveEntryPerReplica {
 
 impl ArchiveEntryPerReplica {
     /// Creates an array of ArchiveEntryPerReplica instances that reflect the current state of `path` inside `roots`.
-    pub fn from_roots<N: NumRoots>(roots: &[PathBuf], path: &Path) -> GenericArray<ArchiveEntryPerReplica, N> {
+    pub fn from_roots<N: NumRoots>(
+        roots: &[PathBuf],
+        path: &Path,
+    ) -> GenericArray<ArchiveEntryPerReplica, N> {
         GenericArray::from_iter(
-            roots.iter().map(
-                |root: &PathBuf| ArchiveEntryPerReplica::from(root.join(path).as_ref())
-            )
+            roots
+                .iter()
+                .map(|root: &PathBuf| ArchiveEntryPerReplica::from(root.join(path).as_ref())),
         )
     }
 
@@ -40,20 +43,20 @@ impl ArchiveEntryPerReplica {
         match *a {
             ArchiveEntryPerReplica::Empty => match *b {
                 ArchiveEntryPerReplica::Empty => true,
-                _ => false
+                _ => false,
             },
             ArchiveEntryPerReplica::File(_) => match *b {
                 ArchiveEntryPerReplica::File(_) => true,
-                _ => false
+                _ => false,
             },
             ArchiveEntryPerReplica::Directory(_) => match *b {
                 ArchiveEntryPerReplica::Directory(_) => true,
-                _ => false
+                _ => false,
             },
             ArchiveEntryPerReplica::Symlink(_) => match *b {
                 ArchiveEntryPerReplica::Symlink(_) => true,
-                _ => false
-            }
+                _ => false,
+            },
         }
     }
 
@@ -82,7 +85,7 @@ impl<'a> From<&'a Path> for ArchiveEntryPerReplica {
             let metadata = path.metadata().unwrap();
             let entry = ArchiveEntryExists {
                 ino: metadata.ino(),
-                ctime: metadata.ctime()
+                ctime: metadata.ctime(),
             };
             let ty = metadata.file_type();
             if ty.is_file() {
@@ -101,5 +104,5 @@ impl<'a> From<&'a Path> for ArchiveEntryPerReplica {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArchiveEntryExists {
     ino: u64,
-    ctime: i64
+    ctime: i64,
 }

@@ -16,6 +16,7 @@ It would be unfair to claim that Ubiquity is suitable for every task, as after a
 - Requires the `rsync` binary to be able to actually propagate file changes.
     + this means that we can utilize all of rsync's goodness, but does present an external dependency
     + thinking about switching to a pure Rust implementation such as [LuminS](https://github.com/wchang22/LuminS)
+- Requires `cmp` to perform file comparisons
 - Test coverage is not great
     + The basics are there, and I use it to keep my own files in sync.
     + However lesser used code paths might be buggy.
@@ -81,6 +82,14 @@ fn main() {
         }
     }
 }
+```
+
+## Running Tests
+
+Tests can be run using `cargo test` as usual, but it may be advantageous to use the following command to be able to see what is happening more easily:
+
+```
+$ env RUST_LOG=debug cargo test -- --test-threads 1
 ```
 
 

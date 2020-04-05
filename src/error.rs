@@ -1,7 +1,7 @@
-use archive;
+use crate::archive;
+use std::fmt;
 use std::io;
 use std::path::PathBuf;
-use std::fmt;
 use walkdir::Error as WalkDirError;
 
 #[derive(Debug)]
@@ -17,7 +17,7 @@ pub enum SyncError {
     Cancelled,
     WalkDirError(WalkDirError),
     /// The rsync executable wasn't found
-    RsyncNotFound(String)
+    RsyncNotFound(String),
 }
 
 impl From<io::Error> for SyncError {
@@ -68,13 +68,18 @@ impl fmt::Display for SyncError {
 }
 
 pub trait DescribeIoError<T> {
-    fn describe<F, I>(self, message: F) -> Result<T, (io::Error, String)> where F: Fn() -> I, I: Into<String>;
+    fn describe<F, I>(self, message: F) -> Result<T, (io::Error, String)>
+    where
+        F: Fn() -> I,
+        I: Into<String>;
 }
 
 impl<T> DescribeIoError<T> for Result<T, io::Error> {
-    fn describe<F, I>(self, message: F) -> Result<T, (io::Error, String)> where F: Fn() -> I, I: Into<String> {
-        self.map_err(|e|
-            (e, message().into())
-        )
+    fn describe<F, I>(self, message: F) -> Result<T, (io::Error, String)>
+    where
+        F: Fn() -> I,
+        I: Into<String>,
+    {
+        self.map_err(|e| (e, message().into()))
     }
 }

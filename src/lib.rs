@@ -11,10 +11,8 @@
 //! Once you have the 'master' replica, you can propagate changes using `ubiquity::propagate::propagate`.
 //!
 //! # Examples
+//!
 //! ```
-//! extern crate ubiquity;
-//! extern crate regex;
-//! extern crate typenum;
 //! #[macro_use]
 //! extern crate generic_array;
 //!
@@ -25,6 +23,8 @@
 //! use regex::Regex;
 //!
 //! fn main() {
+//!     let _ = env_logger::init();
+//!
 //!     let archive = archive::Archive::new(Path::new("tests/replicas/archives").to_path_buf()).unwrap();
 //!
 //!     let a = Path::new("tests/replicas/path_a");
@@ -58,37 +58,28 @@
 //! }
 //! ```
 
-extern crate fnv;
-extern crate bincode;
-extern crate serde;
-extern crate regex;
-extern crate byteorder;
 #[macro_use]
 extern crate log;
-extern crate walkdir;
-extern crate fs2;
-extern crate generic_array;
-extern crate typenum;
 
+use crate::state::ArchiveEntryPerReplica;
+use generic_array::ArrayLength;
 use std::path::PathBuf;
-use state::ArchiveEntryPerReplica;
-use generic_array::{ArrayLength};
 
 /// Detects differences between replicas
 pub mod detect;
-/// Makes suggestions on how to resolve differences between replicas
-pub mod reconcile;
 /// Propagates changes from a master replica to all others
 pub mod propagate;
+/// Makes suggestions on how to resolve differences between replicas
+pub mod reconcile;
 
 /// Handles the serialization and deserialization of archive data
 pub mod archive;
-/// Core structures for representing the state of the filesystem
-pub mod state;
 /// Configuration for the whole system
 pub mod config;
 /// Error handling
 pub mod error;
+/// Core structures for representing the state of the filesystem
+pub mod state;
 
 mod compare_files;
 mod util;

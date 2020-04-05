@@ -6,6 +6,7 @@ description = "n-directional file synchronization utility"
 repository = "https://github.com/neon64/ubiquity"
 readme = "README.md"
 license = "MIT"
+edition = "2018"
 
 [dependencies]
 fnv = "1.0.6"

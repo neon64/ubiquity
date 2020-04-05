@@ -1,20 +1,20 @@
+use crate::util::hash_value;
+use bincode::{self, deserialize_from, serialize_into};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use fs2::FileExt;
+use generic_array::GenericArray;
+use std::collections::hash_map;
+use std::convert::From;
+use std::fmt;
+use std::fs;
 use std::io;
 use std::io::Seek;
-use std::convert::From;
-use std::fs;
-use std::fmt;
-use std::collections::hash_map;
 use std::path::{Path, PathBuf};
-use bincode::{serialize_into, deserialize_from, self};
-use util::hash_value;
-use byteorder::{WriteBytesExt, ReadBytesExt, LittleEndian};
-use fs2::FileExt;
-use generic_array::{GenericArray};
 
-use state::{ArchiveEntryPerReplica};
-use serde::{Serialize, Deserialize};
-use util::FnvHashMap;
-use NumRoots;
+use crate::state::ArchiveEntryPerReplica;
+use crate::util::FnvHashMap;
+use crate::NumRoots;
+use serde::{Deserialize, Serialize};
 
 const ARCHIVE_VERSION: u32 = 3;
 
@@ -24,7 +24,7 @@ pub type HashedPath = u64;
 /// The `Archive` struct stores the state of the replicas after the last syncing operation.
 /// It is used to detect differences to replicas more quickly, and must be kept up to date after propagating changes.
 pub struct Archive {
-    pub directory: PathBuf
+    pub directory: PathBuf,
 }
 
 impl Archive {
@@ -34,7 +34,7 @@ impl Archive {
         if !directory.exists() {
             fs::create_dir_all(&directory)?;
         }
-        Ok(Archive { directory: directory })
+        Ok(Archive { directory })
     }
 
     /// Constructs an `ArchiveFile` representing the entire `directory` in the replicas.
@@ -58,14 +58,13 @@ impl Archive {
 /// Remember each 'file' in the archive represents an entire directory (not recursive) in the replicas.
 pub struct ArchiveFile {
     path: PathBuf,
-    file: Option<fs::File>
+    file: Option<fs::File>,
 }
 
 impl ArchiveFile {
-
     /// Creates a new wrapper around the given archive file.
     fn new(path: PathBuf) -> ArchiveFile {
-        ArchiveFile { path: path, file: None }
+        ArchiveFile { path, file: None }
     }
 
     /// Remove all entries from this file.
@@ -86,7 +85,7 @@ impl ArchiveFile {
         if let Some(ref mut file) = self.file {
             let data = read_from_file(file, &self.path)?;
             Ok(ArchiveEntries::new(data))
-        } else if self.path.exists()  {
+        } else if self.path.exists() {
             let mut file = self.open_file()?;
             let res = read_from_file(&mut file, &self.path)?;
             self.file = Some(file);
@@ -97,7 +96,11 @@ impl ArchiveFile {
     }
 
     fn open_file(&self) -> Result<fs::File, io::Error> {
-        let file = fs::OpenOptions::new().read(true).write(true).create(true).open(&self.path)?;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&self.path)?;
         trace!("Acquiring shared lock for {}", self);
         file.lock_exclusive().unwrap();
         trace!("Acquired lock");
@@ -105,11 +108,14 @@ impl ArchiveFile {
     }
 
     /// Writes entries to disk
-    pub fn write<N: NumRoots>(&mut self, entries: &mut ArchiveEntries<N>) -> Result<(), WriteError> {
+    pub fn write<N: NumRoots>(
+        &mut self,
+        entries: &mut ArchiveEntries<N>,
+    ) -> Result<(), WriteError> {
         // prevents the archive sizes exploding
         entries.prune_deleted();
 
-        let ref entries = entries.entries;
+        let entries = &entries.entries;
         if entries.is_empty() {
             self.remove_all()?;
         } else if let Some(ref mut file) = self.file {
@@ -126,7 +132,11 @@ impl ArchiveFile {
 
 impl fmt::Display for ArchiveFile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Archive({})", self.path.file_name().unwrap().to_str().unwrap())
+        write!(
+            f,
+            "Archive({})",
+            self.path.file_name().unwrap().to_str().unwrap()
+        )
     }
 }
 
@@ -146,7 +156,7 @@ type ArchiveEntryMap<N> = FnvHashMap<HashedPath, GenericArray<ArchiveEntryPerRep
 /// Stores all the archive entries for a specific directory
 pub struct ArchiveEntries<N: NumRoots> {
     entries: ArchiveEntryMap<N>,
-    dirty: bool
+    dirty: bool,
 }
 
 impl<N: NumRoots> fmt::Debug for ArchiveEntries<N> {
@@ -159,14 +169,14 @@ impl<N: NumRoots> ArchiveEntries<N> {
     pub fn empty() -> Self {
         ArchiveEntries {
             entries: Default::default(),
-            dirty: false
+            dirty: false,
         }
     }
 
     fn new(entries: ArchiveEntryMap<N>) -> Self {
         ArchiveEntries {
-            entries: entries,
-            dirty: false
+            entries,
+            dirty: false,
         }
     }
 
@@ -189,14 +199,15 @@ impl<N: NumRoots> ArchiveEntries<N> {
     // Without this archive sizes will probably explode if enough files are created,
     // synced and then deleted.
     pub fn prune_deleted(&mut self) {
-        let empties: Vec<_> = self.entries
+        let empties: Vec<_> = self
+            .entries
             .iter()
             .filter(|&(_, ref entry)| {
-               let mut delete = true;
+                let mut delete = true;
                 for replica in entry.iter() {
                     match replica {
-                        &ArchiveEntryPerReplica::Empty => {},
-                        _ => { delete = false }
+                        ArchiveEntryPerReplica::Empty => {}
+                        _ => delete = false,
                     }
                 }
 
@@ -205,9 +216,11 @@ impl<N: NumRoots> ArchiveEntries<N> {
                 }
                 delete
             })
-            .map(|(k, _)| k.clone())
+            .map(|(k, _)| *k)
             .collect();
-        for empty in empties { self.entries.remove(&empty); }
+        for empty in empties {
+            self.entries.remove(&empty);
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -215,7 +228,10 @@ impl<N: NumRoots> ArchiveEntries<N> {
     }
 }
 
-fn read_from_file<N: NumRoots>(file: &mut fs::File, path: &Path) -> Result<ArchiveEntryMap<N>, ReadError> {
+fn read_from_file<N: NumRoots>(
+    file: &mut fs::File,
+    path: &Path,
+) -> Result<ArchiveEntryMap<N>, ReadError> {
     debug!("Reading archive file {:?}", path);
     file.seek(io::SeekFrom::Start(0))?;
     match read_entries(file) {
@@ -223,7 +239,7 @@ fn read_from_file<N: NumRoots>(file: &mut fs::File, path: &Path) -> Result<Archi
         Err(ReadError::InvalidArchiveVersion(version)) => {
             error!("Invalid archive version {} for file {:?}", version, path);
             Ok(Default::default())
-        },
+        }
         // TODO: if have forgotten when this error case is encountered
         // out of safety, I have removed this case and instead a hard error will be thrown
         //
@@ -231,11 +247,15 @@ fn read_from_file<N: NumRoots>(file: &mut fs::File, path: &Path) -> Result<Archi
         //     error!("End of stream when reading archive file at path {:?}", path);
         //     Ok(Default::default())
         // },
-        Err(e) => Err(From::from(e))
+        Err(e) => Err(e),
     }
 }
 
-fn write_to_file<N: NumRoots>(file: &mut fs::File, path: &Path, entries: &ArchiveEntryMap<N>) -> Result<(), WriteError> {
+fn write_to_file<N: NumRoots>(
+    file: &mut fs::File,
+    path: &Path,
+    entries: &ArchiveEntryMap<N>,
+) -> Result<(), WriteError> {
     info!("Writing to archive file {:?}: {:#?}", path, entries);
     file.set_len(0)?;
 
@@ -248,17 +268,25 @@ fn write_to_file<N: NumRoots>(file: &mut fs::File, path: &Path, entries: &Archiv
 }
 
 /// reads a set of entries from a binary stream
-fn read_entries<R, N>(read: &mut R) -> Result<ArchiveEntryMap<N>, ReadError> where R: io::Read, N: NumRoots {
+fn read_entries<R, N>(read: &mut R) -> Result<ArchiveEntryMap<N>, ReadError>
+where
+    R: io::Read,
+    N: NumRoots,
+{
     let version = read.read_u32::<LittleEndian>()?;
     if version != ARCHIVE_VERSION {
-        return Err(ReadError::InvalidArchiveVersion(version))
+        return Err(ReadError::InvalidArchiveVersion(version));
     }
     let result = deserialize_from(read)?;
     Ok(result)
 }
 
 // writes a set of entries to a binary stream
-fn write_entries<W, N>(out: &mut W, entries: &ArchiveEntryMap<N>) -> Result<(), WriteError> where W: io::Write, N: NumRoots {
+fn write_entries<W, N>(out: &mut W, entries: &ArchiveEntryMap<N>) -> Result<(), WriteError>
+where
+    W: io::Write,
+    N: NumRoots,
+{
     out.write_u32::<LittleEndian>(ARCHIVE_VERSION)?;
     serialize_into(out, &entries)?;
     Ok(())
@@ -269,7 +297,7 @@ fn write_entries<W, N>(out: &mut W, entries: &ArchiveEntryMap<N>) -> Result<(), 
 pub enum ReadError {
     InvalidArchiveVersion(u32),
     IoError(io::Error),
-    BincodeError(bincode::Error)
+    BincodeError(bincode::Error),
 }
 
 impl From<bincode::Error> for ReadError {
@@ -288,7 +316,7 @@ impl From<io::Error> for ReadError {
 /// Various errors explaining why an archive file couldn't be written to
 pub enum WriteError {
     IoError(io::Error),
-    BincodeError(bincode::Error)
+    BincodeError(bincode::Error),
 }
 
 impl From<bincode::Error> for WriteError {
