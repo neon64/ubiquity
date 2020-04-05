@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::iter::FromIterator;
 
 use generic_array::{GenericArray};
 
@@ -71,10 +72,12 @@ pub fn scan_directory_contents<N>(directory: &Path, current_entries: &mut FnvHas
 
                 // insert current filesystem state
                 current_entries.entry(relative_path.clone()).or_insert_with(|| {
-                    GenericArray::map_slice(&config.roots, |root| {
-                        let absolute_path = root.join(&relative_path);
-                        ArchiveEntryPerReplica::from(&*absolute_path)
-                    })
+                    GenericArray::from_iter(
+                        config.roots.iter().map(|root| {
+                            let absolute_path = root.join(&relative_path);
+                            ArchiveEntryPerReplica::from(&*absolute_path)
+                        })
+                    )
                 });
             }
         } else {
@@ -84,10 +87,14 @@ pub fn scan_directory_contents<N>(directory: &Path, current_entries: &mut FnvHas
     }
 
     if !sd_present_in_all_replicas {
-        current_entries.entry(directory.to_path_buf()).or_insert(GenericArray::map_slice(&config.roots, |root| {
-            let absolute_path = root.join(directory);
-            ArchiveEntryPerReplica::from(&*absolute_path)
-        }));
+        current_entries.entry(directory.to_path_buf()).or_insert(
+            GenericArray::from_iter(
+                config.roots.iter().map(|root| {
+                    let absolute_path = root.join(directory);
+                    ArchiveEntryPerReplica::from(&*absolute_path)
+                })
+            )
+        );
     }
 
     Ok(())

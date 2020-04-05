@@ -21,13 +21,16 @@ mod util;
 pub struct Difference<N: NumRoots> {
     /// The path at which the difference occurred
     pub path: PathBuf,
-    #[serde(bound(serialize = "GenericArray<PathBuf, N>: Serialize", deserialize = "GenericArray<PathBuf, N>: Deserialize"))]
+
+    #[serde(bound(serialize = "GenericArray<PathBuf, N>: Serialize", deserialize = "GenericArray<PathBuf, N>: Deserialize<'de>"))]
     /// The roots of the syncing operation
     pub roots: GenericArray<PathBuf, N>,
-    #[serde(bound(serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize", deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize"))]
+
+    #[serde(bound(serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize", deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize<'de>"))]
     /// The previous state that may be present from the archive
     pub previous_state: Option<GenericArray<ArchiveEntryPerReplica, N>>,
-    #[serde(bound(serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize", deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize"))]
+
+    #[serde(bound(serialize = "GenericArray<ArchiveEntryPerReplica, N>: Serialize", deserialize = "GenericArray<ArchiveEntryPerReplica, N>: Deserialize<'de>"))]
     /// The current state of the files
     pub current_state: GenericArray<ArchiveEntryPerReplica, N>
 }

@@ -23,8 +23,6 @@ pub fn propagate<T, P, N>(
     let ref master_entry = difference.current_state[master];
     let master_path = difference.absolute_path_for_root(master);
 
-    //let ref archive_update = ArchiveUpdateInfo::<PL, N>::new(difference.path, &difference.roots, archive);
-
     for (i, replica) in difference.current_state.iter().enumerate() {
         // skip the master
         if i == master { continue; }
@@ -112,7 +110,7 @@ fn transfer_directory<P>(source: &Path, dest: &Path, progress: &P) -> Result<(),
 }
 
 fn run_rsync<P>(source: &Path, dest: &Path, progress: &P) -> Result<(), SyncError> where P: ProgressCallback {
-    let rsync = "/usr/local/bin/rsync";
+    let rsync = "rsync";
     let append_slash = source.metadata()?.is_dir();
     let mut source_str = source.to_string_lossy().into_owned();
     if append_slash {

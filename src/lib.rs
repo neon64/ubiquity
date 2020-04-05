@@ -58,8 +58,6 @@
 //! }
 //! ```
 
-#![feature(proc_macro)]
-
 extern crate fnv;
 extern crate bincode;
 extern crate serde;
@@ -67,8 +65,6 @@ extern crate regex;
 extern crate byteorder;
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate serde_derive;
 extern crate walkdir;
 extern crate fs2;
 extern crate generic_array;

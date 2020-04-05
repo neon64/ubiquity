@@ -4,18 +4,18 @@ Ubiquity is a new file syncing *library* written in Rust. It is loosely inspired
 
 ## Features
 
-- Unlimited number of replicas
+- Unlimited number of replicas (however at the moment, for performance, this is specified at compile time, so the code is specialized for the number of replicas)
 - Configurable update detection that could be powered by a file system watcher (eg: kqueue on Linux or FSEvents on OS X)
 - Runs as a library inside another application, and has a clean API.
 - Caches filesystem state in 'archive directory', speeding up subsequent sync operations.
 
 ## Drawbacks
 
-It would be unfair to claim that Ubiquity is suitable for every task, as after a few weekends of work Ubiquity is far from battle-tested.
+It would be unfair to claim that Ubiquity is suitable for every task, as after a few weekends of work, Ubiquity is far from battle-tested.
 
-- Requires nightly Rust!
-    + It uses `serde_macros` to generate serialization/deserialization code for archives
-    + It (as of recently) uses the question mark operator to make the code cleaner
+- Requires the `rsync` binary to be able to actually propagate file changes.
+    + this means that we can utilize all of rsync's goodness, but does present an external dependency
+    + thinking about switching to a pure Rust implementation such as [LuminS](https://github.com/wchang22/LuminS)
 - Test coverage is not great
     + The basics are there, and I use it to keep my own files in sync.
     + However lesser used code paths might be buggy.
@@ -82,3 +82,6 @@ fn main() {
     }
 }
 ```
+
+
+TODO: replace manual loops with ArchiveEntryPerReplica::from_roots

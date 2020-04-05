@@ -5,15 +5,14 @@ use std::fs;
 use std::fmt;
 use std::collections::hash_map;
 use std::path::{Path, PathBuf};
-use bincode::serde::{serialize_into, deserialize_from, DeserializeError, SerializeError};
-use bincode::SizeLimit;
+use bincode::{serialize_into, deserialize_from, self};
 use util::hash_value;
 use byteorder::{WriteBytesExt, ReadBytesExt, LittleEndian};
 use fs2::FileExt;
-use serde;
 use generic_array::{GenericArray};
 
 use state::{ArchiveEntryPerReplica};
+use serde::{Serialize, Deserialize};
 use util::FnvHashMap;
 use NumRoots;
 
@@ -142,7 +141,7 @@ impl Drop for ArchiveFile {
     }
 }
 
-type ArchiveEntryMap<N: NumRoots> = FnvHashMap<HashedPath, GenericArray<ArchiveEntryPerReplica, N>>;
+type ArchiveEntryMap<N> = FnvHashMap<HashedPath, GenericArray<ArchiveEntryPerReplica, N>>;
 
 /// Stores all the archive entries for a specific directory
 pub struct ArchiveEntries<N: NumRoots> {
@@ -225,10 +224,13 @@ fn read_from_file<N: NumRoots>(file: &mut fs::File, path: &Path) -> Result<Archi
             error!("Invalid archive version {} for file {:?}", version, path);
             Ok(Default::default())
         },
-        Err(ReadError::DeserializeError(DeserializeError::Serde(serde::de::value::Error::EndOfStream))) => {
-            error!("End of stream when reading archive file at path {:?}", path);
-            Ok(Default::default())
-        },
+        // TODO: if have forgotten when this error case is encountered
+        // out of safety, I have removed this case and instead a hard error will be thrown
+        //
+        // Err(ReadError::BincodeError(bincode::Error::Serde(serde::de::value::Error::EndOfStream))) => {
+        //     error!("End of stream when reading archive file at path {:?}", path);
+        //     Ok(Default::default())
+        // },
         Err(e) => Err(From::from(e))
     }
 }
@@ -251,14 +253,14 @@ fn read_entries<R, N>(read: &mut R) -> Result<ArchiveEntryMap<N>, ReadError> whe
     if version != ARCHIVE_VERSION {
         return Err(ReadError::InvalidArchiveVersion(version))
     }
-    let result = deserialize_from(read, SizeLimit::Infinite)?;
+    let result = deserialize_from(read)?;
     Ok(result)
 }
 
 // writes a set of entries to a binary stream
 fn write_entries<W, N>(out: &mut W, entries: &ArchiveEntryMap<N>) -> Result<(), WriteError> where W: io::Write, N: NumRoots {
     out.write_u32::<LittleEndian>(ARCHIVE_VERSION)?;
-    serialize_into(out, &entries, SizeLimit::Infinite)?;
+    serialize_into(out, &entries)?;
     Ok(())
 }
 
@@ -267,12 +269,12 @@ fn write_entries<W, N>(out: &mut W, entries: &ArchiveEntryMap<N>) -> Result<(), 
 pub enum ReadError {
     InvalidArchiveVersion(u32),
     IoError(io::Error),
-    DeserializeError(DeserializeError)
+    BincodeError(bincode::Error)
 }
 
-impl From<DeserializeError> for ReadError {
-    fn from(e: DeserializeError) -> Self {
-        ReadError::DeserializeError(e)
+impl From<bincode::Error> for ReadError {
+    fn from(e: bincode::Error) -> Self {
+        ReadError::BincodeError(e)
     }
 }
 
@@ -286,12 +288,12 @@ impl From<io::Error> for ReadError {
 /// Various errors explaining why an archive file couldn't be written to
 pub enum WriteError {
     IoError(io::Error),
-    SerializeError(SerializeError)
+    BincodeError(bincode::Error)
 }
 
-impl From<SerializeError> for WriteError {
-    fn from(e: SerializeError) -> Self {
-        WriteError::SerializeError(e)
+impl From<bincode::Error> for WriteError {
+    fn from(e: bincode::Error) -> Self {
+        WriteError::BincodeError(e)
     }
 }
 

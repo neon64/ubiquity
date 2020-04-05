@@ -2,6 +2,8 @@ use std::convert::From;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
 use generic_array::GenericArray;
+use serde::{Serialize, Deserialize};
+use std::iter::FromIterator;
 
 use NumRoots;
 
@@ -14,10 +16,23 @@ pub enum ArchiveEntryPerReplica {
     Symlink(ArchiveEntryExists)
 }
 
+/// TODO: This is potentialy dodgy, and has just been implemented to satisfy generic bounds for
+/// deserializing a GenericArray.
+/// Don't use this implementation manually.
+impl Default for ArchiveEntryPerReplica {
+    fn default() -> Self {
+        ArchiveEntryPerReplica::Empty
+    }
+}
+
 impl ArchiveEntryPerReplica {
     /// Creates an array of ArchiveEntryPerReplica instances that reflect the current state of `path` inside `roots`.
     pub fn from_roots<N: NumRoots>(roots: &[PathBuf], path: &Path) -> GenericArray<ArchiveEntryPerReplica, N> {
-        GenericArray::map_slice(roots, |root: &PathBuf| ArchiveEntryPerReplica::from(root.join(path).as_ref()))
+        GenericArray::from_iter(
+            roots.iter().map(
+                |root: &PathBuf| ArchiveEntryPerReplica::from(root.join(path).as_ref())
+            )
+        )
     }
 
     /// Returns true if the entries are equal in type but not necessarily in content.
